@@ -15,100 +15,87 @@ jobs:
           python-version: '3.11'
 
       - name: Install dependencies
-        run: pip install requests rsa
+        run: pip install requests
 
       - name: Write script
         run: |
           cat > cloud189_sign.py << 'PYEOF'
           import requests
-          import rsa
-          import base64
-          import re
+          import json
           import os
-          from urllib.parse import urlparse, parse_qs
 
-          username = os.environ['TY_USERNAME']
+          phone = os.environ['TY_USERNAME']
           password = os.environ['TY_PASSWORD']
 
           session = requests.Session()
           session.headers.update({
-              'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-              'Referer': 'https://cloud.189.cn/web/login.html'
+              'User-Agent': 'Mozilla/5.0 (Linux; Android 13; SM-G981B) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/116.0.0.0 Mobile Safari/537.36',
+              'Accept': 'application/json;charset=UTF-8'
           })
 
           def login():
               try:
-                  # 获取登录URL
-                  r = session.get('https://cloud.189.cn/api/portal/loginUrl.action?redirectURL=https://cloud.189.cn/web/redirect.html')
-                  login_url = r.json()['loginUrl']
-                  print(f'登录URL: {login_url}')
-
-                  # 获取登录页面
-                  r = session.get(login_url)
-                  captcha_token = re.findall(r"captchaToken' value='(.+?)'", r.text)[0]
-                  lt = re.findall(r'lt = "(.+?)"', r.text)[0]
-                  return_url = re.findall(r"returnUrl = '(.+?)'", r.text)[0]
-                  param_id = re.findall(r'paramId = "(.+?)"', r.text)[0]
-                  j_rsa_key = re.findall(r'j_rsaKey" value="(\S+)"', r.text)[0]
+                  # 使用手机号密码登录
+                  url = 'https://m.cloud.189.cn/v2/drawPrizeMarketDetails.action?taskId=TASK_SIGNIN&activityId=ACT_SIGNIN'
                   
-                  # RSA加密
-                  pub_key = rsa.PublicKey.load_pkcs1_openssl_pem(j_rsa_key.encode())
-                  encrypted_username = base64.b64encode(rsa.encrypt(username.encode(), pub_key)).decode()
-                  encrypted_password = base64.b64encode(rsa.encrypt(password.encode(), pub_key)).decode()
-
+                  # 先访问登录页获取 cookie
+                  session.get('https://m.cloud.189.cn/zhuanti/2021/shakeLottery/index.html')
+                  
                   # 登录
+                  login_url = 'https://open.e.189.cn/api/logbox/oauth2/loginSubmit.do'
                   data = {
                       'appKey': 'cloud',
                       'accountType': '01',
-                      'userName': f'{{RSA}}{encrypted_username}',
-                      'password': f'{{RSA}}{encrypted_password}',
+                      'userName': phone,
+                      'password': password,
                       'validateCode': '',
-                      'captchaToken': captcha_token,
-                      'returnUrl': return_url,
+                      'returnUrl': 'https://m.cloud.189.cn/zhuanti/2021/shakeLottery/index.html',
                       'mailSuffix': '@189.cn',
                       'dynamicCheck': 'FALSE',
                       'clientType': '1',
-                      'cb_SaveName': '0',
-                      'isOauth2': 'false',
-                      'state': '',
-                      'paramId': param_id,
-                      'lt': lt
+                      'cb_SaveName': '1',
+                      'isOauth2': 'false'
                   }
-
-                  r = session.post(login_url, data=data)
-                  result = r.json()
                   
-                  if result.get('result') == 0:
-                      print('登录成功')
-                      # 跳转到云盘
-                      redirect_url = result.get('toUrl')
-                      if redirect_url:
-                          session.get(redirect_url)
+                  r = session.post(login_url, data=data)
+                  print(f'登录响应: {r.status_code}')
+                  
+                  if r.status_code == 200:
+                      # 尝试访问签到页面
+                      r = session.get('https://m.cloud.189.cn/v2/drawPrizeMarketDetails.action?taskId=TASK_SIGNIN&activityId=ACT_SIGNIN')
+                      print(f'签到页面: {r.status_code}')
                       return True
-                  else:
-                      print(f'登录失败: {result.get("msg")}')
-                      return False
-
+                  
+                  return False
+                  
               except Exception as e:
                   print(f'登录错误: {e}')
                   import traceback
                   traceback.print_exc()
                   return False
 
-          def user_sign():
+          def sign():
               try:
-                  r = session.get('https://api.cloud.189.cn/mkt/userSign.action')
-                  data = r.json()
-                  if data.get('isSign'):
-                      print('个人签到: 今日已签')
+                  # 签到
+                  url = 'https://m.cloud.189.cn/v2/drawPrizeMarketDetails.action?taskId=TASK_SIGNIN&activityId=ACT_SIGNIN'
+                  r = session.get(url)
+                  
+                  print(f'签到响应: {r.status_code}')
+                  print(f'响应内容: {r.text[:200]}')
+                  
+                  if '已签到' in r.text or 'success' in r.text.lower():
+                      print('签到成功或今日已签')
                   else:
-                      print(f'个人签到: 获得 {data.get("netdiskBonus")}M 空间')
+                      print('签到状态未知')
+                      
               except Exception as e:
-                  print(f'个人签到错误: {e}')
+                  print(f'签到错误: {e}')
 
           if __name__ == '__main__':
               if login():
-                  user_sign()
+                  sign()
+              else:
+                  print('登录失败，无法签到')
           PYEOF
 
       - name: Run
