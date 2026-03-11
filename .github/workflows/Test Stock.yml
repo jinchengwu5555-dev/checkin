@@ -22,11 +22,11 @@ jobs:
           import requests
 
           ETFS = [
-              ('510500', '中证500ETF',  '1'),
-              ('518880', '黄金ETF',     '1'),
-              ('510300', '沪深300ETF',  '1'),
-              ('513100', '纳斯达克ETF', '1'),
-              ('513500', '标普500ETF',  '1'),
+              ('510500', '中证500ETF'),
+              ('518880', '黄金ETF'),
+              ('510300', '沪深300ETF'),
+              ('513100', '纳斯达克ETF'),
+              ('513500', '标普500ETF'),
           ]
 
           headers = {
@@ -55,49 +55,68 @@ jobs:
                   print(f"实时数据失败 {code}: {e}")
                   return None
 
-          def get_history_high(code, prefix):
-              url = "https://push2his.eastmoney.com/api/qt/stock/kline/get"
+          def get_history_high(code):
+              """通过新浪财经历史接口获取历史最高价"""
+              url = f"https://money.finance.sina.com.cn/quotes_service/api/json_v2.php/CN_MarketData.getKLineData"
               params = {
-                  'secid':   f"{prefix}.{code}",
-                  'fields1': 'f1,f2,f3,f4,f5',
-                  'fields2': 'f2,f3,f4,f5',
-                  'klt':     '101',
-                  'fqt':     '0',
-                  'beg':     '19900101',
-                  'end':     '20991231',
-                  'lmt':     '10000',
+                  'symbol':    f"sh{code}",
+                  'scale':     240,    # 日K
+                  'ma':        'no',
+                  'datalen':   3000,   # 最多取3000条
               }
               try:
                   r = requests.get(url, params=params, headers=headers, timeout=15)
-                  klines = r.json().get('data', {}).get('klines', [])
-                  if not klines:
-                      print(f"历史K线为空 {code}，尝试 secid 原始响应: {r.text[:200]}")
+                  r.encoding = 'utf-8'
+                  import json, re
+                  # 响应格式: [{"d":"2024-01-01","o":"1.1","h":"1.2","l":"1.0","c":"1.1","v":"1000"}]
+                  data = json.loads(r.text)
+                  if not data:
                       return None
-                  # 格式: 日期,开,收,高,低,...
-                  highs = [float(k.split(',')[3]) for k in klines]
-                  return max(highs)
+                  highs = [float(item['h']) for item in data if 'h' in item]
+                  return max(highs) if highs else None
               except Exception as e:
                   print(f"历史最高失败 {code}: {e}")
                   return None
 
-          # ── 表头 ──
-          col = [14, 8, 10, 10, 12]
-          def row(*cells):
-              return '│' + '│'.join(
-                  str(c).center(w) for c, w in zip(cells, col)
-              ) + '│'
+          def display_width(s):
+              """计算字符串实际显示宽度（中文=2，英文=1）"""
+              w = 0
+              for c in str(s):
+                  w += 2 if ord(c) > 127 else 1
+              return w
 
-          sep = '├' + '┼'.join('─' * w for w in col) + '┤'
-          top = '┌' + '┬'.join('─' * w for w in col) + '┐'
-          bot = '└' + '┴'.join('─' * w for w in col) + '┘'
+          def pad_cell(s, width):
+              """按显示宽度居中填充"""
+              s = str(s)
+              dw = display_width(s)
+              total_pad = width - dw
+              left  = total_pad // 2
+              right = total_pad - left
+              return ' ' * left + s + ' ' * right
 
-          print(top)
-          print(row('名称', '现价', '涨跌幅', '历史最高', '现价/历史最高'))
-          print(sep)
+          # 列宽（按显示宽度定义）
+          cols = [
+              ('名称',       12),
+              ('现价',        8),
+              ('涨跌幅',     10),
+              ('历史最高',   10),
+              ('现价/最高',  10),
+          ]
 
-          for code, label, prefix in ETFS:
+          def make_sep(left, mid, right, fill='─'):
+              return left + mid.join(fill * w for _, w in cols) + right
+
+          def make_row(cells):
+              return '│' + '│'.join(pad_cell(c, w) for c, (_, w) in zip(cells, cols)) + '│'
+
+          print(make_sep('┌', '┬', '┐'))
+          print(make_row([name for name, _ in cols]))
+          print(make_sep('├', '┼', '┤'))
+
+          results = []
+          for code, label in ETFS:
               d    = get_realtime(code)
-              high = get_history_high(code, prefix)
+              high = get_history_high(code)
 
               if d:
                   sign  = '+' if d['change_pct'] >= 0 else ''
@@ -106,9 +125,12 @@ jobs:
                   cur   = f"{d['current']:.3f}"
                   h_str = f"{high:.3f}" if high else 'N/A'
                   ratio = f"{d['current']/high*100:.1f}%" if high else 'N/A'
-                  print(row(label, cur, pct, h_str, ratio))
+                  row   = [label, cur, pct, h_str, ratio]
               else:
-                  print(row(label, 'N/A', 'N/A', 'N/A', 'N/A'))
+                  row = [label, 'N/A', 'N/A', 'N/A', 'N/A']
 
-          print(bot)
+              results.append(row)
+              print(make_row(row))
+
+          print(make_sep('└', '┴', '┘'))
           EOF
