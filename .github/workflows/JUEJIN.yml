@@ -32,19 +32,23 @@ jobs:
           const cookies = process.env.JUEJIN_COOKIES ? process.env.JUEJIN_COOKIES.split('#') : [];
           const pushKey = process.env.PUSH_KEY;
           
-          const AID = "2608"; // 统一使用 Web ID 以获取更全的数据展示
-          const generateUUID = () => "7143" + Math.floor(Math.random() * 1000000000);
+          const AID_APP = "1931"; 
+          const AID_WEB = "2608";
+          const generateUUID = () => "71439" + Math.floor(Math.random() * 1000000000);
           
           async function executeTask(cookie, index) {
             const uuid = generateUUID();
-            const PARAMS = "?aid=" + AID + "&uuid=" + uuid;
+            // 签到用的移动端参数
+            const APP_PARAMS = "?aid=" + AID_APP + "&uuid=" + uuid + "&app_name=juejin_sdk&device_platform=android";
+            // 查数据用的Web端参数
+            const WEB_PARAMS = "?aid=" + AID_WEB + "&uuid=" + uuid;
             
             const api = axios.create({
               baseURL: 'https://api.juejin.cn',
               timeout: 15000,
               headers: {
                 'Cookie': cookie,
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+                'User-Agent': 'Mozilla/5.0 (Linux; Android 12; SM-G991B) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Mobile Safari/537.36 Juejin/Android/6.0.1',
                 'Origin': 'https://juejin.cn',
                 'Referer': 'https://juejin.cn/',
                 'Content-Type': 'application/json'
@@ -54,41 +58,47 @@ jobs:
             let report = [];
 
             try {
-              // 0. 获取用户信息
-              const userRes = await api.get("/user_api/v1/user/get" + PARAMS);
-              const userName = userRes.data?.data?.user_name || "未知掘友";
-              report.push("掘友: " + userName);
+              // 0. 获取用户信息 (Web接口)
+              const userRes = await api.get("/user_api/v1/user/get" + WEB_PARAMS);
+              report.push("掘友: " + (userRes.data?.data?.user_name || "未知"));
 
-              // 1. 每日签到
-              const checkIn = await api.post("/growth_api/v1/check_in" + PARAMS, {});
-              if (checkIn.data?.err_no === 0) {
-                report.push("✅ 签到成功: +" + checkIn.data.data.incr_point + " 矿石");
+              // 1. 每日签到 (移动端接口，绕过校验)
+              const checkIn = await api.post("/growth_api/v1/check_in" + APP_PARAMS, {});
+              const ckData = checkIn.data;
+              if (ckData?.err_no === 0) {
+                report.push("✅ 签到成功: +" + ckData.data.incr_point + " 矿石");
+              } else if (ckData?.err_no === 20001 || (ckData?.err_msg && ckData.err_msg.includes("已完成签到"))) {
+                report.push("ℹ️ 签到状态: 今日已签到过");
               } else {
-                report.push("ℹ️ 签到状态: " + (checkIn.data?.err_no === 20001 ? "今日已签到过" : checkIn.data?.err_msg));
+                report.push("❌ 签到失败: " + (ckData?.err_msg || "移动端接口异常"));
               }
 
-              // 2. 沾喜气 (修复版路由)
+              // 2. 沾喜气 (混合模式)
               try {
-                // 强制使用动态获取的历史 ID
-                const history = await api.post("/growth_api/v1/lottery_history/global_big" + PARAMS, { page_no: 1, page_size: 5 });
+                // 先用Web端查ID，再用移动端沾
+                const history = await api.post("/growth_api/v1/lottery_history/global_big" + WEB_PARAMS, { page_no: 1, page_size: 5 });
                 const luckyId = history.data?.data?.lotteries?.[0]?.history_id || "7143943034230636551";
-                const dip = await api.post("/growth_api/v1/lottery_lucky/dip_lucky" + PARAMS, { lottery_history_id: luckyId });
-                report.push(dip.data?.err_no === 0 ? "✨ 沾喜气: +" + dip.data.data.dip_value + " 幸运值" : "✨ 沾喜气: " + dip.data?.err_msg);
+                const dip = await api.post("/growth_api/v1/lottery_lucky/dip_lucky" + APP_PARAMS, { lottery_history_id: luckyId });
+                if (dip.data?.err_no === 0) {
+                  report.push("✨ 沾喜气: +" + dip.data.data.dip_value + " 幸运值");
+                } else {
+                  report.push("✨ 沾喜气: " + (dip.data?.err_msg || "今日已沾"));
+                }
               } catch (e) { report.push("✨ 沾喜气: 任务跳过"); }
 
-              // 3. 免费抽奖
-              const config = await api.get("/growth_api/v1/lottery_config/get" + PARAMS);
+              // 3. 免费抽奖 (移动端模式)
+              const config = await api.get("/growth_api/v1/lottery_config/get" + APP_PARAMS);
               if (config.data?.data?.free_count > 0) {
-                const draw = await api.post("/growth_api/v1/lottery/draw" + PARAMS, {});
+                const draw = await api.post("/growth_api/v1/lottery/draw" + APP_PARAMS, {});
                 report.push(draw.data?.err_no === 0 ? "🎁 抽奖结果: " + draw.data.data.lottery_name : "🎁 抽奖失败");
               } else {
                 report.push("🎫 抽奖提示: 今日无免费机会");
               }
 
-              // 4. 资产统计 (仿照用户上传图片的样式)
-              const counts = await api.get("/growth_api/v1/get_counts" + PARAMS);
-              const curPoint = await api.get("/growth_api/v1/get_cur_point" + PARAMS);
-              const luckyRes = await api.get("/growth_api/v1/get_lucky_value" + PARAMS);
+              // 4. 资产统计 (对齐图片样式)
+              const counts = await api.get("/growth_api/v1/get_counts" + WEB_PARAMS);
+              const curPoint = await api.get("/growth_api/v1/get_cur_point" + WEB_PARAMS);
+              const luckyRes = await api.get("/growth_api/v1/get_lucky_value" + WEB_PARAMS);
 
               if (counts.data?.data) {
                 report.push("连续签到天数: " + counts.data.data.cont_count);
@@ -105,11 +115,11 @@ jobs:
 
           async function main() {
             if (cookies.length === 0) return console.log("未检测到 COOKIES");
-            let finalOutput = ["🔹 稀土掘金自动化中心"];
+            let finalOutput = ["🔹 稀土掘金自动化报告"];
             for (let i = 0; i < cookies.length; i++) {
-              console.log("正在执行账号 " + (index = i + 1));
+              console.log("执行账号 " + (i + 1));
               const res = await executeTask(cookies[i], i);
-              finalOutput.push("\n" + res + "\n" + "=".repeat(20));
+              finalOutput.push("\n" + res + "\n--------------------");
             }
             const message = finalOutput.join('\n');
             console.log(message);
