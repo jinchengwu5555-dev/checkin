@@ -12,94 +12,19 @@ jobs:
       - name: Setup Python
         uses: actions/setup-python@v5
         with:
-          python-version: '3.11'
+          python-version: '3.x'
 
       - name: Install dependencies
-        run: pip install requests
-
-      - name: Write script
         run: |
-          cat > cloud189_sign.py << 'PYEOF'
-          import requests
-          import json
-          import os
+          pip install requests rsa
 
-          phone = os.environ['TY_USERNAME']
-          password = os.environ['TY_PASSWORD']
+      - name: Download script
+        run: |
+          curl -L -o cloud189_checkin.py https://raw.githubusercontent.com/wes-lin/Cloud189Checkin/main/main.py
 
-          session = requests.Session()
-          session.headers.update({
-              'User-Agent': 'Mozilla/5.0 (Linux; Android 13; SM-G981B) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/116.0.0.0 Mobile Safari/537.36',
-              'Accept': 'application/json;charset=UTF-8'
-          })
-
-          def login():
-              try:
-                  # 使用手机号密码登录
-                  url = 'https://m.cloud.189.cn/v2/drawPrizeMarketDetails.action?taskId=TASK_SIGNIN&activityId=ACT_SIGNIN'
-                  
-                  # 先访问登录页获取 cookie
-                  session.get('https://m.cloud.189.cn/zhuanti/2021/shakeLottery/index.html')
-                  
-                  # 登录
-                  login_url = 'https://open.e.189.cn/api/logbox/oauth2/loginSubmit.do'
-                  data = {
-                      'appKey': 'cloud',
-                      'accountType': '01',
-                      'userName': phone,
-                      'password': password,
-                      'validateCode': '',
-                      'returnUrl': 'https://m.cloud.189.cn/zhuanti/2021/shakeLottery/index.html',
-                      'mailSuffix': '@189.cn',
-                      'dynamicCheck': 'FALSE',
-                      'clientType': '1',
-                      'cb_SaveName': '1',
-                      'isOauth2': 'false'
-                  }
-                  
-                  r = session.post(login_url, data=data)
-                  print(f'登录响应: {r.status_code}')
-                  
-                  if r.status_code == 200:
-                      # 尝试访问签到页面
-                      r = session.get('https://m.cloud.189.cn/v2/drawPrizeMarketDetails.action?taskId=TASK_SIGNIN&activityId=ACT_SIGNIN')
-                      print(f'签到页面: {r.status_code}')
-                      return True
-                  
-                  return False
-                  
-              except Exception as e:
-                  print(f'登录错误: {e}')
-                  import traceback
-                  traceback.print_exc()
-                  return False
-
-          def sign():
-              try:
-                  # 签到
-                  url = 'https://m.cloud.189.cn/v2/drawPrizeMarketDetails.action?taskId=TASK_SIGNIN&activityId=ACT_SIGNIN'
-                  r = session.get(url)
-                  
-                  print(f'签到响应: {r.status_code}')
-                  print(f'响应内容: {r.text[:200]}')
-                  
-                  if '已签到' in r.text or 'success' in r.text.lower():
-                      print('签到成功或今日已签')
-                  else:
-                      print('签到状态未知')
-                      
-              except Exception as e:
-                  print(f'签到错误: {e}')
-
-          if __name__ == '__main__':
-              if login():
-                  sign()
-              else:
-                  print('登录失败，无法签到')
-          PYEOF
-
-      - name: Run
+      - name: Run checkin
         env:
-          TY_USERNAME: ${{ secrets.TY_USERNAME }}
-          TY_PASSWORD: ${{ secrets.TY_PASSWORD }}
-        run: python cloud189_sign.py
+          CLOUD189_USER: ${{ secrets.TY_USERNAME }}
+          CLOUD189_PWD: ${{ secrets.TY_PASSWORD }}
+        run: |
+          python cloud189_checkin.py
