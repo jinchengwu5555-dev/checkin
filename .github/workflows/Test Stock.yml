@@ -20,6 +20,7 @@ jobs:
         run: |
           python3 - << 'EOF'
           import requests, yfinance as yf
+          from datetime import datetime, timezone, timedelta
 
           ETFS = [
               ('510500', '中证500ETF',  '510500.SS'),
@@ -35,9 +36,8 @@ jobs:
           }
 
           def get_realtime(code):
-              url = f"https://hq.sinajs.cn/list=sh{code}"
               try:
-                  r = requests.get(url, headers=headers, timeout=10)
+                  r = requests.get(f"https://hq.sinajs.cn/list=sh{code}", headers=headers, timeout=10)
                   r.encoding = 'gbk'
                   data_str = r.text.split('"')[1]
                   if not data_str:
@@ -46,76 +46,80 @@ jobs:
                   prev_close = float(f[2])
                   current    = float(f[3])
                   return {
-                      'name':       f[0],
                       'current':    current,
-                      'prev_close': prev_close,
                       'change_pct': (current - prev_close) / prev_close * 100,
                   }
-              except Exception as e:
-                  print(f"实时数据失败 {code}: {e}")
+              except:
                   return None
 
           def get_history_high(yahoo_symbol):
-              """通过 Yahoo Finance 获取历史最高价"""
               try:
-                  ticker = yf.Ticker(yahoo_symbol)
-                  hist = ticker.history(period='max')
+                  hist = yf.Ticker(yahoo_symbol).history(period='max')
                   if hist.empty:
-                      print(f"Yahoo 无数据: {yahoo_symbol}")
                       return None
-                  high = hist['High'].max()
-                  print(f"Yahoo {yahoo_symbol} 历史最高: {high:.3f}，共 {len(hist)} 条K线")
-                  return high
-              except Exception as e:
-                  print(f"Yahoo 历史最高失败 {yahoo_symbol}: {e}")
+                  return hist['High'].max()
+              except:
                   return None
 
-          def display_width(s):
-              w = 0
-              for c in str(s):
-                  w += 2 if ord(c) > 127 else 1
-              return w
+          def dw(s):
+              return sum(2 if ord(c) > 127 else 1 for c in str(s))
 
-          def pad_cell(s, width):
+          def pad(s, width):
               s = str(s)
-              dw = display_width(s)
-              total_pad = width - dw
-              left  = total_pad // 2
-              right = total_pad - left
-              return ' ' * left + s + ' ' * right
+              pad_total = width - dw(s)
+              l = pad_total // 2
+              return ' ' * l + s + ' ' * (pad_total - l)
 
           cols = [
-              ('名称',      12),
-              ('现价',       8),
-              ('涨跌幅',    10),
-              ('历史最高',  10),
-              ('现价/最高', 10),
+              ('ETF名称',    12),
+              ('现价',        8),
+              ('较前日',     10),
+              ('历史最高',   10),
+              ('现价/最高',  10),
           ]
 
-          def make_sep(left, mid, right):
-              return left + mid.join('─' * w for _, w in cols) + right
+          def sep(l, m, r):
+              return l + m.join('─' * w for _, w in cols) + r
 
-          def make_row(cells):
-              return '│' + '│'.join(pad_cell(c, w) for c, (_, w) in zip(cells, cols)) + '│'
+          def row(cells):
+              return '│' + '│'.join(pad(c, w) for c, (_, w) in zip(cells, cols)) + '│'
 
-          print(make_sep('┌', '┬', '┐'))
-          print(make_row([n for n, _ in cols]))
-          print(make_sep('├', '┼', '┤'))
+          now = datetime.now(timezone(timedelta(hours=8))).strftime('%Y-%m-%d %H:%M')
+
+          print(f'📊 ETF 行情  {now}')
+          print(sep('┌', '┬', '┐'))
+          print(row([n for n, _ in cols]))
+          print(sep('├', '┼', '┤'))
 
           for code, label, yahoo in ETFS:
               d    = get_realtime(code)
               high = get_history_high(yahoo)
 
               if d:
-                  sign  = '+' if d['change_pct'] >= 0 else ''
                   arrow = '↑' if d['change_pct'] >= 0 else '↓'
-                  pct   = f"{arrow}{sign}{d['change_pct']:.2f}%"
+                  sign  = '+' if d['change_pct'] >= 0 else ''
                   cur   = f"{d['current']:.3f}"
+                  pct   = f"{arrow}{sign}{d['change_pct']:.2f}%"
                   h_str = f"{high:.3f}" if high else 'N/A'
                   ratio = f"{d['current']/high*100:.1f}%" if high else 'N/A'
-                  print(make_row([label, cur, pct, h_str, ratio]))
+                  print(row([label, cur, pct, h_str, ratio]))
               else:
-                  print(make_row([label, 'N/A', 'N/A', 'N/A', 'N/A']))
+                  print(row([label, 'N/A', 'N/A', 'N/A', 'N/A']))
 
-          print(make_sep('└', '┴', '┘'))
+          print(sep('└', '┴', '┘'))
           EOF
+```
+
+预期输出：
+```
+📊 ETF 行情  2026-03-11 17:48
+
+┌────────────┬────────┬──────────┬──────────┬──────────┐
+│  ETF名称   │  现价  │  较前日  │ 历史最高 │现价/最高 │
+├────────────┼────────┼──────────┼──────────┼──────────┤
+│ 中证500ETF │ 8.468  │ ↓-0.15%  │  10.060  │  84.2%   │
+│  黄金ETF   │ 10.974 │ ↑+0.16%  │  11.977  │  91.6%   │
+│ 沪深300ETF │ 4.711  │ ↑+0.60%  │   5.367  │  87.8%   │
+│纳斯达克ETF │ 1.792  │ ↑+0.22%  │   2.001  │  89.6%   │
+│ 标普500ETF │ 2.313  │ ↑+0.09%  │   2.504  │  92.4%   │
+└────────────┴────────┴──────────┴──────────┴──────────┘
