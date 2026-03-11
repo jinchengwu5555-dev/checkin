@@ -17,6 +17,9 @@ jobs:
       - name: Install cloud189-sdk
         run: npm install cloud189-sdk
 
+      - name: Debug client methods
+        run: node -e "const { CloudAuthClient } = require('cloud189-sdk'); const client = new CloudAuthClient('test', 'test'); console.log('CloudAuthClient methods:', Object.getOwnPropertyNames(Object.getPrototypeOf(client)));"
+
       - name: Write script
         run: |
           cat > cloud189_sign.js << 'JSEOF'
@@ -28,7 +31,17 @@ jobs:
           async function main() {
             try {
               const client = new CloudAuthClient(username, password);
-              await client.login();
+              console.log('Client methods:', Object.getOwnPropertyNames(Object.getPrototypeOf(client)));
+              
+              // 尝试调用登录方法
+              if (typeof client.login === 'function') {
+                await client.login();
+              } else if (typeof client.authenticate === 'function') {
+                await client.authenticate();
+              } else {
+                console.log('Available methods:', Object.getOwnPropertyNames(Object.getPrototypeOf(client)));
+              }
+              
               console.log('登录成功');
 
               const res1 = await client.userSign();
