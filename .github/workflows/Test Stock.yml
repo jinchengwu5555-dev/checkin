@@ -19,15 +19,14 @@ jobs:
       - name: Fetch Stock Data
         run: |
           python3 - << 'EOF'
-          import requests, json
+          import requests
 
-          # 目标ETF列表 (代码, 名称)
           ETFS = [
-              ('510500', '中证500ETF'),
-              ('518880', '黄金ETF'),
-              ('510300', '沪深300ETF'),
-              ('513100', '纳斯达克ETF'),
-              ('513500', '标普500ETF'),
+              ('510500', '中证500ETF',  '1'),
+              ('518880', '黄金ETF',     '1'),
+              ('510300', '沪深300ETF',  '1'),
+              ('513100', '纳斯达克ETF', '1'),
+              ('513500', '标普500ETF',  '1'),
           ]
 
           headers = {
@@ -35,94 +34,81 @@ jobs:
               'Referer': 'https://finance.sina.com.cn'
           }
 
-          def get_stock_data(code):
-              """通过新浪财经接口获取沪市ETF数据"""
-              # 沪市前缀 sh，深市前缀 sz
-              prefix = 'sh' if code.startswith('5') or code.startswith('1') else 'sz'
-              symbol = f"{prefix}{code}"
-              url = f"https://hq.sinajs.cn/list={symbol}"
+          def get_realtime(code):
+              url = f"https://hq.sinajs.cn/list=sh{code}"
               try:
                   r = requests.get(url, headers=headers, timeout=10)
                   r.encoding = 'gbk'
-                  text = r.text.strip()
-                  print(f"\n原始响应 [{symbol}]: {text[:200]}")
-
-                  # 解析数据
-                  data_str = text.split('"')[1]
+                  data_str = r.text.split('"')[1]
                   if not data_str:
                       return None
-                  fields = data_str.split(',')
-
-                  name = fields[0]
-                  open_price = float(fields[1])
-                  prev_close = float(fields[2])
-                  current = float(fields[3])
-                  high = float(fields[4])
-                  low = float(fields[5])
-
-                  change_pct = (current - prev_close) / prev_close * 100
-
+                  f = data_str.split(',')
+                  prev_close = float(f[2])
+                  current    = float(f[3])
                   return {
-                      'name': name,
-                      'current': current,
+                      'name':       f[0],
+                      'current':    current,
                       'prev_close': prev_close,
-                      'change_pct': change_pct,
-                      'high': high,
-                      'low': low,
+                      'change_pct': (current - prev_close) / prev_close * 100,
                   }
               except Exception as e:
-                  print(f"获取 {code} 失败: {e}")
+                  print(f"实时数据失败 {code}: {e}")
                   return None
 
-          def get_history_high(code):
-              """通过东方财富接口获取历史最高价"""
-              prefix = '1' if code.startswith('5') or code.startswith('1') else '0'
-              url = f"https://push2his.eastmoney.com/api/qt/stock/kline/get"
+          def get_history_high(code, prefix):
+              url = "https://push2his.eastmoney.com/api/qt/stock/kline/get"
               params = {
-                  'secid': f"{prefix}.{code}",
+                  'secid':   f"{prefix}.{code}",
                   'fields1': 'f1,f2,f3,f4,f5',
                   'fields2': 'f2,f3,f4,f5',
-                  'klt': '101',   # 日K
-                  'fqt': '0',     # 不复权
-                  'beg': '19900101',
-                  'end': '20991231',
-                  'lmt': '10000',
+                  'klt':     '101',
+                  'fqt':     '0',
+                  'beg':     '19900101',
+                  'end':     '20991231',
+                  'lmt':     '10000',
               }
               try:
                   r = requests.get(url, params=params, headers=headers, timeout=15)
-                  data = r.json()
-                  klines = data.get('data', {}).get('klines', [])
+                  klines = r.json().get('data', {}).get('klines', [])
                   if not klines:
+                      print(f"历史K线为空 {code}，尝试 secid 原始响应: {r.text[:200]}")
                       return None
-                  # 每条格式: "日期,开,收,高,低,成交量,成交额,振幅,涨跌幅,涨跌额,换手率"
+                  # 格式: 日期,开,收,高,低,...
                   highs = [float(k.split(',')[3]) for k in klines]
                   return max(highs)
               except Exception as e:
-                  print(f"获取历史最高 {code} 失败: {e}")
+                  print(f"历史最高失败 {code}: {e}")
                   return None
 
-          print("=" * 50)
-          print("ETF 数据测试")
-          print("=" * 50)
+          # ── 表头 ──
+          col = [14, 8, 10, 10, 12]
+          def row(*cells):
+              return '│' + '│'.join(
+                  str(c).center(w) for c, w in zip(cells, col)
+              ) + '│'
 
-          for code, label in ETFS:
-              print(f"\n{'─'*30}")
-              print(f"测试: {label} ({code})")
-              data = get_stock_data(code)
-              high = get_history_high(code)
+          sep = '├' + '┼'.join('─' * w for w in col) + '┤'
+          top = '┌' + '┬'.join('─' * w for w in col) + '┐'
+          bot = '└' + '┴'.join('─' * w for w in col) + '┘'
 
-              if data:
-                  arrow = '📈' if data['change_pct'] >= 0 else '📉'
-                  sign = '+' if data['change_pct'] >= 0 else ''
-                  ratio = (data['current'] / high * 100) if high else None
+          print(top)
+          print(row('名称', '现价', '涨跌幅', '历史最高', '现价/历史最高'))
+          print(sep)
 
-                  print(f"名称: {data['name']}")
-                  print(f"当前价: {data['current']}")
-                  print(f"涨跌幅: {arrow} {sign}{data['change_pct']:.2f}%")
-                  print(f"历史最高: {high}")
-                  if ratio:
-                      print(f"当前/历史最高: {ratio:.1f}%")
+          for code, label, prefix in ETFS:
+              d    = get_realtime(code)
+              high = get_history_high(code, prefix)
+
+              if d:
+                  sign  = '+' if d['change_pct'] >= 0 else ''
+                  arrow = '↑' if d['change_pct'] >= 0 else '↓'
+                  pct   = f"{arrow}{sign}{d['change_pct']:.2f}%"
+                  cur   = f"{d['current']:.3f}"
+                  h_str = f"{high:.3f}" if high else 'N/A'
+                  ratio = f"{d['current']/high*100:.1f}%" if high else 'N/A'
+                  print(row(label, cur, pct, h_str, ratio))
               else:
-                  print("❌ 获取数据失败")
+                  print(row(label, 'N/A', 'N/A', 'N/A', 'N/A'))
 
+          print(bot)
           EOF
