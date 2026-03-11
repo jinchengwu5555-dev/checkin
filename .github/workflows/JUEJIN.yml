@@ -1,177 +1,108 @@
-name: Juejin Checkin
+name: Juejin Auto Helper
+
 on:
-  workflow_dispatch:
   schedule:
-    - cron: '0 4 * * *'
+    # 每天北京时间 09:00 运行 (UTC 01:00)
+    - cron: '0 1 * * *'
+  workflow_dispatch: # 支持手动点击运行
 
 jobs:
-  checkin:
+  juejin_task:
     runs-on: ubuntu-latest
-    environment: user
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+      - name: Checkout code
+        uses: actions/checkout@v3
 
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v3
         with:
           node-version: '18'
 
-      - name: Install dependencies
+      - name: Run Script
+        env:
+          # 在 GitHub Repo -> Settings -> Secrets 中设置以下变量
+          JUEJIN_COOKIES: ${{ secrets.JUEJIN_COOKIES }} 
+          PUSH_KEY: ${{ secrets.PUSH_KEY }} # 可选：Bark 或 Server酱的 Key
         run: |
-          npm install axios tough-cookie
-
-      - name: Create checkin script
-        run: |
-          cat > juejin_checkin.js << 'EOF'
+          # 1. 自动安装依赖
+          npm install axios
+          
+          # 2. 写入内联 Node.js 脚本
+          cat << 'EOF' > index.js
           const axios = require('axios');
-          const { CookieJar } = require('tough-cookie');
-          const { wrapper } = require('axios-cookiejar-support');
 
-          class JuejinHelper {
-            constructor(cookie) {
-              this.cookie = cookie;
-              this.client = wrapper(axios.create({
-                baseURL: 'https://api.juejin.cn',
-                headers: {
-                  'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-                  'Cookie': cookie,
-                  'Content-Type': 'application/json',
-                  'Origin': 'https://juejin.cn',
-                  'Referer': 'https://juejin.cn/'
-                },
-                timeout: 10000
-              }));
+          // --- 配置区 ---
+          const cookies = process.env.JUEJIN_COOKIES ? process.env.JUEJIN_COOKIES.split('#') : [];
+          const pushKey = process.env.PUSH_KEY;
+
+          const http = axios.create({
+            baseURL: 'https://api.juejin.cn',
+            timeout: 10000,
+            headers: {
+              'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+              'Referer': 'https://juejin.cn/',
             }
-
-            async getCurrentUser() {
-              try {
-                const res = await this.client.get('/user_api/v1/user/get');
-                if (res.data.err_no === 0) {
-                  console.log(`用户: ${res.data.data.user_name}`);
-                  return res.data.data;
-                }
-                return null;
-              } catch (e) {
-                console.error('获取用户信息失败:', e.message);
-                return null;
-              }
-            }
-
-            async checkIn() {
-              try {
-                const res = await this.client.post('/growth_api/v1/check_in');
-                if (res.data.err_no === 0) {
-                  console.log('签到成功');
-                  return true;
-                } else if (res.data.err_msg && res.data.err_msg.includes('已签到')) {
-                  console.log('今日已签到');
-                  return true;
-                } else {
-                  console.log(`签到失败: ${res.data.err_msg || '未知错误'}`);
-                  return false;
-                }
-              } catch (e) {
-                console.error('签到异常:', e.message);
-                return false;
-              }
-            }
-
-            async getLotteryConfig() {
-              try {
-                const res = await this.client.get('/growth_api/v1/lottery_config/get');
-                if (res.data.err_no === 0) {
-                  const freeCount = res.data.data.free_count || 0;
-                  console.log(`免费抽奖次数: ${freeCount}`);
-                  return freeCount;
-                }
-                return 0;
-              } catch (e) {
-                console.error('获取抽奖配置失败:', e.message);
-                return 0;
-              }
-            }
-
-            async draw() {
-              try {
-                const res = await this.client.post('/growth_api/v1/lottery/draw');
-                if (res.data.err_no === 0) {
-                  const lotteryName = res.data.data.lottery_name || '未知奖品';
-                  console.log(`抽奖成功: ${lotteryName}`);
-                  return true;
-                } else {
-                  console.log(`抽奖: ${res.data.err_msg || '未知错误'}`);
-                  return false;
-                }
-              } catch (e) {
-                console.error('抽奖异常:', e.message);
-                return false;
-              }
-            }
-
-            async getCurPoint() {
-              try {
-                const res = await this.client.get('/growth_api/v1/get_cur_point');
-                if (res.data.err_no === 0) {
-                  console.log(`当前矿石: ${res.data.data}`);
-                  return res.data.data;
-                }
-                return 0;
-              } catch (e) {
-                console.error('获取矿石失败:', e.message);
-                return 0;
-              }
-            }
-
-            async run() {
-              console.log('='.repeat(50));
-              console.log('开始 掘金 签到任务');
-              console.log('='.repeat(50));
-
-              const user = await this.getCurrentUser();
-              if (!user) {
-                console.log('Cookie 无效，请更新');
-                return false;
-              }
-
-              console.log('\n--- 每日签到 ---');
-              await this.checkIn();
-
-              console.log('\n--- 矿石统计 ---');
-              await this.getCurPoint();
-
-              console.log('\n--- 免费抽奖 ---');
-              const freeCount = await this.getLotteryConfig();
-              if (freeCount > 0) {
-                for (let i = 0; i < freeCount; i++) {
-                  console.log(`\n第 ${i + 1} 次抽奖:`);
-                  await this.draw();
-                  await new Promise(resolve => setTimeout(resolve, 1000));
-                }
-              }
-
-              console.log('\n' + '='.repeat(50));
-              console.log('签到任务完成');
-              console.log('='.repeat(50));
-              return true;
-            }
-          }
-
-          const cookie = process.env.JUEJIN_COOKIE;
-          if (!cookie) {
-            console.log('未设置 JUEJIN_COOKIE');
-            process.exit(1);
-          }
-
-          const helper = new JuejinHelper(cookie);
-          helper.run().catch(err => {
-            console.error('执行失败:', err);
-            process.exit(1);
           });
+
+          async function runTask(cookie) {
+            const instance = axios.create({ 
+              baseURL: 'https://api.juejin.cn',
+              headers: { 'Cookie': cookie, 'User-Agent': 'Mozilla/5.0' }
+            });
+
+            let report = [];
+            try {
+              // 1. 签到
+              const checkIn = await instance.post('/growth_api/v1/check_in');
+              if (checkIn.data.err_no === 0) {
+                report.push(`✅ 签到成功: +${checkIn.data.data.incr_point} 矿石`);
+              } else {
+                report.push(`ℹ️ 签到提示: ${checkIn.data.err_msg}`);
+              }
+
+              // 2. 免费抽奖
+              const config = await instance.get('/show_api/v1/lottery_config/get');
+              if (config.data.data.free_count > 0) {
+                const draw = await instance.post('/show_api/v1/lottery/draw');
+                report.push(`🎁 抽奖结果: ${draw.data.data.lottery_name}`);
+              } else {
+                report.push("🎫 今日无免费抽奖机会");
+              }
+
+              // 3. 沾喜气 (每日首次)
+              const luckyRes = await instance.post('/growth_api/v1/lottery_lucky/dip_lucky', { lottery_history_id: '7143943034230636551' });
+              report.push(luckyRes.data.err_no === 0 ? "✨ 沾喜气成功" : "✨ 今日已沾过喜气");
+
+            } catch (err) {
+              report.push(`❌ 运行异常: ${err.message}`);
+            }
+            return report.join('\n');
+          }
+
+          async function main() {
+            if (cookies.length === 0) {
+              console.error("未找到 JUEJIN_COOKIES，请在 Secrets 中配置");
+              return;
+            }
+
+            let finalReport = ["【掘金自动化助手报告】"];
+            for (let i = 0; i < cookies.length; i++) {
+              console.log(`正在处理第 ${i+1} 个账号...`);
+              const res = await runTask(cookies[i]);
+              finalReport.push(`--- 账号 ${i+1} ---\n${res}`);
+            }
+
+            const message = finalReport.join('\n\n');
+            console.log(message);
+
+            // 推送通知逻辑 (以 Bark 为例)
+            if (pushKey) {
+              await axios.get(`https://api.day.app/${pushKey}/${encodeURIComponent('掘金签到报告')}/${encodeURIComponent(message)}`);
+            }
+          }
+
+          main();
           EOF
 
-      - name: Run checkin
-        env:
-          JUEJIN_COOKIE: ${{ secrets.JUEJIN_COOKIE }}
-        run: |
-          node juejin_checkin.js
+          # 3. 执行脚本
+          node index.js
