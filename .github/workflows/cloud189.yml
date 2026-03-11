@@ -1,19 +1,16 @@
-name: Cloud189 Auto Helper
+name: Cloud189 Auto Pro
 
 on:
   schedule:
-    # 每天北京/槟城时间 08:45 执行 (UTC 00:45)
+    # 槟城时间 08:45 (UTC 00:45)
     - cron: '45 0 * * *'
-  workflow_dispatch: # 支持手动点击测试
+  workflow_dispatch:
 
 jobs:
   cloud_task:
     runs-on: ubuntu-latest
-    env:
-      # 适配 GitHub 2026 年环境策略
-      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
     steps:
-      - name: Checkout Code
+      - name: Checkout
         uses: actions/checkout@v4
 
       - name: Setup Node.js
@@ -29,20 +26,18 @@ jobs:
         run: |
           npm install axios crypto-js
           
-          cat << 'EOF' > index.js
+          node -e "
           const axios = require('axios');
           const crypto = require('crypto-js');
 
           const accounts = process.env.CLOUD189_ACCOUNTS ? process.env.CLOUD189_ACCOUNTS.split('@') : [];
           const pushKey = process.env.PUSH_KEY;
-          let reportLines = ["☁️ 天翼云盘自动化报告 (" + new Date().toLocaleString('zh-CN', {timeZone: 'Asia/Shanghai'}) + ")"];
+          let reportLines = ['☁️ 天翼云盘自动化报告 (' + new Date().toLocaleString('zh-CN', {timeZone: 'Asia/Kuala_Lumpur'}) + ')'];
 
           async function runTask(user, pwd, index) {
-            let logs = ["【账号 " + (index + 1) + ": " + user.substring(0,3) + "****" + user.substring(7) + "】"];
-            
-            // 创建具有 Cookie 维持能力的实例
+            let logs = ['【账号 ' + (index + 1) + ': ' + user.substring(0,3) + '****' + user.substring(7) + '】'];
             const api = axios.create({
-              timeout: 20000,
+              timeout: 15000,
               headers: {
                 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
                 'Referer': 'https://cloud.189.cn/main.action',
@@ -51,53 +46,47 @@ jobs:
             });
 
             try {
-              // 1. 模拟登录（此处使用 189 稳定签到接口，部分接口会自动识别登录态）
-              // 注意：如果你的账号启用了二步验证，建议使用 Cookie 模式
-              const checkInRes = await api.get("https://cloud.189.cn/api/open/user/checkin.action");
+              // 1. 尝试直接请求签到接口 (天翼云盘部分账号支持免密跳转签到)
+              const checkInRes = await api.get('https://cloud.189.cn/api/open/user/checkin.action');
               
-              if (checkInRes.data && checkInRes.data.isCheckIn !== undefined) {
+              if (checkInRes.data && typeof checkInRes.data.isCheckIn !== 'undefined') {
                 if (checkInRes.data.isCheckIn) {
-                  logs.push("✅ 签到成功: +" + checkInRes.data.prizeCapacity + "MB");
+                  logs.push('✅ 签到成功: +' + checkInRes.data.prizeCapacity + 'MB');
                 } else {
-                  logs.push("ℹ️ 状态: 今日已签到过");
+                  logs.push('ℹ️ 状态: 今日已签到过');
                 }
               } else {
-                logs.push("❌ 签到失败: 登录态失效，请重新登录");
+                logs.push('❌ 登录失效: 请在手机端登录一次获取最新 Session');
               }
 
-              // 2. 获取资产信息 (对齐你之前图片的样式)
-              const spaceRes = await api.get("https://cloud.189.cn/api/open/user/getDetailedStorageInfo.action");
+              // 2. 获取资产信息 (模仿你上传的图片效果)
+              const spaceRes = await api.get('https://cloud.189.cn/api/open/user/getDetailedStorageInfo.action');
               if (spaceRes.data) {
                 const total = (spaceRes.data.totalSize / 1024 / 1024 / 1024 / 1024).toFixed(2);
                 const used = (spaceRes.data.usedSize / 1024 / 1024 / 1024 / 1024).toFixed(2);
-                logs.push("📊 空间使用: " + used + "TB / " + total + "TB");
+                logs.push('📊 空间使用: ' + used + 'TB / ' + total + 'TB');
               }
 
             } catch (err) {
-              logs.push("⚠️ 运行异常: " + err.message);
+              logs.push('⚠️ 运行异常: ' + (err.response ? err.response.status : err.message));
             }
             return logs.join('\n');
           }
 
           async function main() {
-            if (accounts.length === 0) return console.log("未配置 CLOUD189_ACCOUNTS");
-            
+            if (accounts.length === 0) return console.log('未配置 CLOUD189_ACCOUNTS');
             for (let i = 0; i < accounts.length; i++) {
               const [u, p] = accounts[i].split('#');
-              if (!u || !p) continue;
+              if (!u) continue;
               const res = await runTask(u, p, i);
               reportLines.push(res);
             }
-
             const output = reportLines.join('\n\n');
             console.log(output);
-
             if (pushKey) {
-              const url = "https://api.day.app/" + pushKey + "/" + encodeURIComponent("云盘报告") + "/" + encodeURIComponent(output) + "?isArchive=1";
-              await axios.get(url).catch(() => {});
+              const barkUrl = 'https://api.day.app/' + pushKey + '/' + encodeURIComponent('天翼云报告') + '/' + encodeURIComponent(output) + '?isArchive=1';
+              await axios.get(barkUrl).catch(() => {});
             }
           }
           main();
-          EOF
-          
-          node index.js
+          "
