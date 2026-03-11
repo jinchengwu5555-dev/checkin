@@ -1,4 +1,4 @@
-name: Cloud189 Checkin
+name: Cloud189
 on:
   workflow_dispatch:
   schedule:
