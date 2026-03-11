@@ -17,7 +17,9 @@ jobs:
         run: pip install dailycheckin
 
       - name: Write config
-        run: echo '${{ secrets.CHECKIN_CONFIG }}' > config.json
+        env:
+          CHECKIN_CONFIG: ${{ secrets.CHECKIN_CONFIG }}
+        run: python -c "import os,json; open('config.json','w').write(os.environ['CHECKIN_CONFIG'])"
 
       - name: Run checkin
         run: dailycheckin
