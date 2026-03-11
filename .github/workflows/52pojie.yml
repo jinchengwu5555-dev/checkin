@@ -1,14 +1,16 @@
-name: 52Pojie Mobile Pro 2026
+name: 52Pojie Visual看板 Pro
 
 on:
   schedule:
-    # 槟城时间 09:00
+    # 槟城时间 09:00 (UTC 01:00) 
     - cron: '0 1 * * *'
   workflow_dispatch:
 
 jobs:
   pojie_task:
     runs-on: ubuntu-latest
+    env:
+      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -30,66 +32,71 @@ jobs:
 
           const cookies = process.env.POJIE_COOKIES ? process.env.POJIE_COOKIES.split('@') : [];
           const pushKey = process.env.PUSH_KEY;
-          let finalReport = ["📱 吾爱破解资产看板 (移动版)"];
+          let finalReport = ["🔹 稀土吾爱破解自动化中心"];
 
           async function executeTask(cookie, index) {
-            // 剔除杂质
+            // 自动剔除中文字符，只保留合法 Cookie
             const cleanCookie = cookie.split('只找到')[0].trim();
             
             const api = axios.create({
-              timeout: 25000,
+              timeout: 30000,
               headers: {
                 'Cookie': cleanCookie,
-                'User-Agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_4 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.4 Mobile/15E148 Safari/604.1',
-                'Referer': 'https://www.52pojie.cn/forum.php?mobile=yes',
-                'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8'
+                // 必须使用桌面端 UA 才能与你的电脑 Cookie 匹配
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
+                'Referer': 'https://www.52pojie.cn/forum.php',
+                'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8'
               }
             });
 
             let report = [];
             try {
-              // 第一步：访问移动端首页看登录态
-              const home = await api.get('https://www.52pojie.cn/forum.php?mobile=yes');
+              // 1. 获取首页内容检测登录态
+              const home = await api.get('https://www.52pojie.cn/forum.php');
               const html = home.data;
 
-              // 检测 WAF
+              // 检查是否遇到 Cloudflare 或安全校验
               if (html.includes('安全验证') || html.includes('Cloudflare')) {
-                report.push("❌ 拦截警报: 移动端依然被 WAF 封锁");
+                report.push("❌ 拦截警报: GitHub IP 被防火墙拦截，建议稍后再试");
                 return report.join('\n');
               }
 
-              // 移动端匹配用户名
-              const nameMatch = html.match(/<a[^>]*>(.+?)<\/a>欢迎您/) || html.match(/欢迎您, (.+?)<\/div>/);
+              // 提取用户名 (兼容 htVC_2132_ 前缀)
+              const nameMatch = html.match(/vwmy\"><a[^>]*>(.+?)<\/a>/) || html.match(/欢迎您, (.+?)<\/div>/);
               const userName = nameMatch ? nameMatch[1] : "未知会员";
               report.push("掘友: " + userName);
 
               if (userName === "未知会员") {
-                 report.push("❌ 状态: Cookie 失效，请重新按 F12 抓取最新的 ht_auth 字段");
+                 report.push("❌ 状态: Cookie 已失效。请在浏览器刷新 52 页面后重新复制 document.cookie");
                  return report.join('\n');
               }
 
-              // 第二步：执行签到 (移动端专用任务链接)
+              // 2. 执行签到任务
               const checkIn = await api.get('https://www.52pojie.cn/home.php?mod=task&do=apply&id=2');
               if (checkIn.data.includes('任务已成功完成')) {
-                report.push("✅ 签到成功: 奖励已存入包裹");
+                report.push("✅ 签到成功 +1 吾爱币");
               } else {
-                report.push("ℹ️ 签到状态: 今日已完成或任务冷却中");
+                report.push("ℹ️ 签到状态: 今日已完成签到");
               }
 
-              // 第三步：抓取资产数据 (对齐你的图片样式)
+              // 3. 统计资产 (完美复刻你上传的 Juejin 图片风格)
               const creditRes = await api.get('https://www.52pojie.cn/home.php?mod=spacecp&ac=credit&showuser=1');
-              const creditHtml = creditRes.data;
-              const coin = (creditHtml.match(/吾爱币: <\/em>(.+?)&nbsp;/) || [])[1] || "0";
-              const prestige = (creditHtml.match(/威望: <\/em>(.+?) <\/li>/) || [])[1] || "0";
+              const cHtml = creditRes.data;
+              
+              const coin = (cHtml.match(/吾爱币: <\/em>(.+?)&nbsp;/) || [])[1] || "0";
+              const credit = (cHtml.match(/积分: <\/em>(.+?)&nbsp;/) || [])[1] || "0";
+              const prestige = (cHtml.match(/威望: <\/em>(.+?) <\/li>/) || [])[1] || "0";
+              const contribution = (cHtml.match(/贡献: <\/em>(.+?) <\/li>/) || [])[1] || "0";
 
+              report.push("累计积分: " + credit);
               report.push("当前吾爱币: " + coin);
-              report.push("当前威望值: " + prestige);
+              report.push("当前幸运值: " + prestige + "/1000"); // 威望映射为幸运值
               report.push("====================");
-              report.push("Bug: " + prestige); 
+              report.push("Bug: " + contribution); // 贡献映射为 Bug
               report.push("====================");
 
             } catch (err) {
-              report.push("⚠️ 通讯异常: " + (err.response ? "HTTP " + err.response.status : "超时"));
+              report.push("⚠️ 运行异常: " + (err.response ? "HTTP " + err.response.status : "网络超时"));
             }
             return report.join('\n');
           }
@@ -97,15 +104,15 @@ jobs:
           async function main() {
             if (cookies.length === 0) return console.log("未配置 Secret");
             for (let i = 0; i < cookies.length; i++) {
-              console.log("执行移动端账号 " + (i + 1));
+              console.log("执行账号 " + (i + 1));
               const res = await executeTask(cookies[i], i);
               finalReport.push("\n" + res);
             }
-            const message = finalReport.join('\n');
-            console.log(message);
+            const output = finalReport.join('\n');
+            console.log(output);
             if (pushKey) {
-              const barkUrl = "https://api.day.app/" + pushKey + "/" + encodeURIComponent("52移动报告") + "/" + encodeURIComponent(message) + "?isArchive=1";
-              await axios.get(barkUrl).catch(() => {});
+              const url = "https://api.day.app/" + pushKey + "/" + encodeURIComponent("52破解看板") + "/" + encodeURIComponent(output) + "?isArchive=1";
+              await axios.get(url).catch(() => {});
             }
           }
           main();
