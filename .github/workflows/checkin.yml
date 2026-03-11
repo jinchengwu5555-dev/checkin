@@ -1,4 +1,4 @@
-name: Daily Checkin
+name: Daily Checkin Action
 on:
   workflow_dispatch:
   schedule:
