@@ -17,23 +17,17 @@ jobs:
       - name: Install cloud189-sdk
         run: npm install cloud189-sdk
 
-      - name: Debug package
-        run: node -e "const pkg = require('cloud189-sdk'); console.log('Package exports:', Object.keys(pkg)); console.log('Full export:', pkg);"
-
       - name: Write script
         run: |
           cat > cloud189_sign.js << 'JSEOF'
-          const pkg = require('cloud189-sdk');
-          console.log('Available exports:', Object.keys(pkg));
-          
-          const Cloud189 = pkg.Cloud189 || pkg.default || pkg;
-          
+          const { CloudAuthClient } = require('cloud189-sdk');
+
           const username = process.env.TY_USERNAME;
           const password = process.env.TY_PASSWORD;
 
           async function main() {
             try {
-              const client = new Cloud189(username, password);
+              const client = new CloudAuthClient(username, password);
               await client.login();
               console.log('登录成功');
 
