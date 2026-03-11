@@ -13,15 +13,14 @@ jobs:
         with:
           node-version: '18'
 
-      - name: JD Sign
-        env:
-          JD_COOKIE: ${{ secrets.JD_COOKIE }}
+      - name: Install axios
+        run: npm install axios
+
+      - name: Write script
         run: |
-          npm install axios
-          node - <<'EOF'
+          cat > jd_sign.js << 'JSEOF'
           const axios = require('axios');
           const cookie = process.env.JD_COOKIE;
-
           async function sign() {
             try {
               const res = await axios.post(
@@ -38,9 +37,25 @@ jobs:
                 }
               );
               const data = res.data;
-              console.log('京东签到原始结果:', JSON.stringify(data, null, 2));
+              console.log('京东签到结果:', JSON.stringify(data, null, 2));
               if (data.data) {
                 const d = data.data;
                 if (d.status === 1) {
-                  console.log('✅ 签到成功！获得京豆:', d.signInfo?.signScore || 0);
+                  console.log('签到成功！获得京豆:', d.signInfo && d.signInfo.signScore || 0);
+                } else if (d.status === 2) {
+                  console.log('今日已签到');
+                } else {
+                  console.log('签到状态:', d.status);
                 }
+              }
+            } catch(e) {
+              console.error('签到失败:', e.message);
+            }
+          }
+          sign();
+          JSEOF
+
+      - name: JD Sign
+        env:
+          JD_COOKIE: ${{ secrets.JD_COOKIE }}
+        run: node jd_sign.js
