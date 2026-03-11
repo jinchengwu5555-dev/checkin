@@ -1,9 +1,10 @@
-name: Juejin Helper Final
+name: Juejin Helper 2026 Pro
 
 on:
   schedule:
+    # 每天北京/槟城时间 08:30 执行 (UTC 00:30)
     - cron: '30 0 * * *'
-  workflow_dispatch:
+  workflow_dispatch: # 支持手动测试
 
 jobs:
   juejin_task:
@@ -17,8 +18,9 @@ jobs:
         with:
           node-version: '20'
 
-      - name: Run Automation
+      - name: Run Juejin Automation
         env:
+          # 请在 GitHub Secrets 中配置以下两个变量
           JUEJIN_COOKIES: ${{ secrets.JUEJIN_COOKIES }}
           PUSH_KEY: ${{ secrets.PUSH_KEY }}
         run: |
@@ -27,36 +29,29 @@ jobs:
           cat << 'EOF' > index.js
           const axios = require('axios');
 
+          // --- 核心配置 ---
           const cookies = process.env.JUEJIN_COOKIES ? process.env.JUEJIN_COOKIES.split('#') : [];
           const pushKey = process.env.PUSH_KEY;
           
-          // 2026 最新 Web 端参数
-          const aid = "2608";
-          const generateUUID = () => "71439430" + Math.floor(Math.random() * 1000000000);
+          // 模拟 App 端参数，风控较 Web 端宽松
+          const aid = "1931"; 
+          const uuid = "7143" + Math.floor(Math.random() * 1000000000);
+          const PARAMS = "?aid=" + aid + "&uuid=" + uuid + "&app_name=juejin_sdk&device_platform=android";
           
-          let finalReport = ["📦 掘金助手运行报告 (" + new Date().toLocaleString('zh-CN', {timeZone: 'Asia/Shanghai'}) + ")"];
+          let reportLines = ["📦 掘金自动化助手报告 (" + new Date().toLocaleString('zh-CN', {timeZone: 'Asia/Shanghai'}) + ")"];
 
-          async function executeTask(cookie, index) {
-            const uuid = generateUUID();
-            const PARAMS = "?aid=" + aid + "&uuid=" + uuid + "&_signature=_02B4Z6wo00901";
-            
+          async function startTask(cookie, index) {
             const api = axios.create({
               baseURL: 'https://api.juejin.cn',
               timeout: 15000,
               headers: {
                 'Cookie': cookie,
-                'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
-                'Accept': 'application/json, text/plain, */*',
-                'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.8',
-                'Content-Type': 'application/json',
+                'User-Agent': 'Mozilla/5.0 (Linux; Android 12; SM-G991B) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Mobile Safari/537.36 Juejin/Android/6.0.1',
+                'Host': 'api.juejin.cn',
                 'Origin': 'https://juejin.cn',
                 'Referer': 'https://juejin.cn/',
-                'sec-ch-ua': '"Chromium";v="122", "Not(A:Brand";v="24", "Google Chrome";v="122"',
-                'sec-ch-ua-mobile': '?0',
-                'sec-ch-ua-platform': '"macOS"',
-                'sec-fetch-dest': 'empty',
-                'sec-fetch-mode': 'cors',
-                'sec-fetch-site': 'same-site'
+                'Content-Type': 'application/json; charset=utf-8',
+                'Accept-Encoding': 'gzip, deflate, br'
               }
             });
 
@@ -68,45 +63,35 @@ jobs:
               if (checkIn.data && checkIn.data.err_no === 0) {
                 logs.push("✅ 签到成功: +" + checkIn.data.data.incr_point + " 矿石");
               } else {
-                const errorDetail = checkIn.data ? checkIn.data.err_msg : "触发Web风控(403)";
-                logs.push(checkIn.data?.err_no === 20001 ? "ℹ️ 今日已签到过" : "❌ 签到失败: " + errorDetail);
+                const msg = checkIn.data ? checkIn.data.err_msg : "触发风控(403)";
+                logs.push(checkIn.data?.err_no === 20001 ? "ℹ️ 今日已签到过" : "❌ 签到失败: " + msg);
               }
 
-              // 延时一下防止并发过快
-              await new Promise(r => setTimeout(r, 2000));
+              // 等待 3 秒模拟人工操作
+              await new Promise(r => setTimeout(r, 3000));
 
               // 2. 免费抽奖
               const config = await api.get("/growth_api/v1/lottery_config/get" + PARAMS);
               if (config.data?.data?.free_count > 0) {
                 const draw = await api.post("/growth_api/v1/lottery/draw" + PARAMS, {});
-                if (draw.data?.err_no === 0) {
-                  logs.push("🎁 抽奖结果: " + draw.data.data.lottery_name);
-                } else {
-                  logs.push("🎁 抽奖失败: " + draw.data.err_msg);
-                }
+                logs.push(draw.data?.err_no === 0 ? "🎁 抽奖结果: " + draw.data.data.lottery_name : "🎁 抽奖失败");
               } else {
                 logs.push("🎫 抽奖提示: 今日无免费机会");
               }
 
-              // 3. 沾喜气 (增加容错)
-              try {
-                const history = await api.post("/growth_api/v1/lottery_history/global_big" + PARAMS, { page_no: 1, page_size: 5 });
-                const luckyId = history.data?.data?.lotteries?.[0]?.history_id || "7143943034230636551";
-                const dip = await api.post("/growth_api/v1/lottery_lucky/dip_lucky" + PARAMS, { lottery_history_id: luckyId });
-                if (dip.data?.err_no === 0) {
-                  logs.push("✨ 沾喜气成功: +" + dip.data.data.dip_value + " 点");
-                } else {
-                  logs.push("✨ 沾喜气: " + (dip.data?.err_msg || "今日已沾"));
-                }
-              } catch (e) {
-                logs.push("✨ 沾喜气任务由于路由变动跳过");
-              }
+              // 3. 沾喜气 (修复 404 路由问题)
+              // 必须携带负载参数，否则接口返回路由不存在
+              const history = await api.post("/growth_api/v1/lottery_history/global_big" + PARAMS, { page_no: 1, page_size: 5 });
+              const luckyId = history.data?.data?.lotteries?.[0]?.history_id || "7143943034230636551";
+              
+              const dip = await api.post("/growth_api/v1/lottery_lucky/dip_lucky" + PARAMS, { lottery_history_id: luckyId });
+              logs.push(dip.data?.err_no === 0 ? "✨ 沾喜气成功" : "✨ 沾喜气: " + (dip.data?.err_msg || "今日已沾过"));
 
             } catch (err) {
               if (err.response && err.response.status === 403) {
-                logs.push("⚠️ 账号风险: 掘金拦截了 Actions IP。建议手动签到一次或更新 Cookie。");
+                logs.push("⚠️ 账号受限: 掘金拦截了本次请求(403)。建议检查并更新 Cookie。");
               } else {
-                logs.push("⚠️ 系统错误: " + err.message);
+                logs.push("⚠️ 运行异常: " + err.message);
               }
             }
             return logs.join('\n');
@@ -114,20 +99,26 @@ jobs:
 
           async function main() {
             if (cookies.length === 0) {
-              console.error("未找到 JUEJIN_COOKIES，请检查 Secrets 配置。");
+              console.log("❌ 错误: 未找到 JUEJIN_COOKIES");
               return;
             }
+
             for (let i = 0; i < cookies.length; i++) {
-              const res = await executeTask(cookies[i], i);
-              finalReport.push(res);
+              console.log(">>> 正在处理账号 " + (i + 1));
+              const res = await startTask(cookies[i], i);
+              reportLines.push(res);
             }
-            const output = finalReport.join('\n\n');
-            console.log(output);
+
+            const finalMsg = reportLines.join('\n\n');
+            console.log(finalMsg);
+
+            // 推送通知
             if (pushKey) {
-              const barkUrl = "https://api.day.app/" + pushKey + "/" + encodeURIComponent("掘金报告") + "/" + encodeURIComponent(output) + "?isArchive=1";
-              await axios.get(barkUrl).catch(() => {});
+              const barkUrl = "https://api.day.app/" + pushKey + "/" + encodeURIComponent("掘金助手报告") + "/" + encodeURIComponent(finalMsg) + "?isArchive=1";
+              await axios.get(barkUrl).catch(() => console.log("通知发送失败"));
             }
           }
+
           main();
           EOF
           node index.js
