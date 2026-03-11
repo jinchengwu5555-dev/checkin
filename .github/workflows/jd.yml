@@ -1,0 +1,44 @@
+name: JD Checkin
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '0 2 * * *'
+
+jobs:
+  checkin:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+
+      - name: JD Sign
+        env:
+          JD_COOKIE: ${{ secrets.JD_COOKIE }}
+        run: |
+          npm install axios
+          node - <<'EOF'
+          const axios = require('axios');
+          const cookie = process.env.JD_COOKIE;
+
+          async function sign() {
+            try {
+              const res = await axios.get(
+                'https://api.m.jd.com/client.action?functionId=signBeanAct',
+                {
+                  headers: {
+                    'Cookie': cookie,
+                    'User-Agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 16_0 like Mac OS X)',
+                    'Referer': 'https://bean.m.jd.com/'
+                  }
+                }
+              );
+              console.log('京东签到结果:', JSON.stringify(res.data, null, 2));
+            } catch(e) {
+              console.error('签到失败:', e.message);
+            }
+          }
+
+          sign();
+          EOF
