@@ -1,0 +1,55 @@
+name: Cloud189 Checkin
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '0 2 * * *'
+
+jobs:
+  checkin:
+    runs-on: ubuntu-latest
+    environment: user
+    steps:
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+
+      - name: Install cloud189-sdk
+        run: npm install cloud189-sdk
+
+      - name: Write script
+        run: |
+          cat > cloud189_sign.js << 'JSEOF'
+          const { Cloud189 } = require('cloud189-sdk');
+
+          const username = process.env.TY_USERNAME;
+          const password = process.env.TY_PASSWORD;
+
+          async function main() {
+            try {
+              const client = new Cloud189(username, password);
+              await client.login();
+              console.log('登录成功');
+
+              const res1 = await client.userSign();
+              console.log('个人签到:', res1.isSign ? '今日已签' : `获得 ${res1.netdiskBonus}M 空间`);
+
+              const res2 = await client.familySign();
+              if (res2 && res2.length > 0) {
+                res2.forEach(r => {
+                  console.log('家庭签到:', r.isSign ? '今日已签' : `获得 ${r.bonusSpace}M 空间`);
+                });
+              }
+            } catch(e) {
+              console.error('错误:', e.message);
+            }
+          }
+
+          main();
+          JSEOF
+
+      - name: Run
+        env:
+          TY_USERNAME: ${{ secrets.TY_USERNAME }}
+          TY_PASSWORD: ${{ secrets.TY_PASSWORD }}
+        run: node cloud189_sign.js
