@@ -72,7 +72,7 @@ jobs:
               if d['code'] == 0:
                   lines.append(f"用户: {d['data']['uname']}")
               else:
-                  lines.append(f"❌ 签到失败: Cookie 失效")
+                  lines.append("❌ 签到失败: Cookie 失效")
                   result = '\n'.join(lines)
                   with open(os.environ['GITHUB_ENV'], 'a') as f:
                       f.write(f"BILIBILI_RESULT<<ENDBILIBILI\n{result}\nENDBILIBILI\n")
@@ -84,7 +84,6 @@ jobs:
                   f.write(f"BILIBILI_RESULT<<ENDBILIBILI\n{result}\nENDBILIBILI\n")
               sys.exit(0)
 
-          # Bilibili 没有传统签到，以观看+投币+分享作为每日任务
           lines.append("✅ 签到成功")
 
           videos = []
@@ -106,7 +105,7 @@ jobs:
                                     headers=headers,
                                     data={'aid': videos[0], 'cid': cid, 'played_time': 60, 'csrf': get_csrf()},
                                     timeout=10)
-                      lines.append(f"✅ 观看视频成功")
+                      lines.append("✅ 观看视频成功")
               except Exception as e:
                   lines.append(f"⚠️ 观看视频异常: {e}")
 
@@ -130,7 +129,7 @@ jobs:
                                     data={'aid': videos[0], 'csrf': get_csrf()},
                                     timeout=10)
                   if r.json().get('code') == 0:
-                      lines.append(f"✅ 分享视频成功")
+                      lines.append("✅ 分享视频成功")
               except: pass
 
           result = '\n'.join(lines)
@@ -140,7 +139,7 @@ jobs:
           EOF
 
       # ─────────────────────────────────────────
-      # 2. 掘金 Juejin
+      # 2. 掘金
       # ─────────────────────────────────────────
       - name: Juejin Checkin
         id: juejin
@@ -262,7 +261,6 @@ jobs:
           proc = subprocess.run(['dailycheckin'], capture_output=True, text=True)
           output = proc.stdout + proc.stderr
 
-          # 只保留关键结果行
           keep = []
           for line in output.splitlines():
               line = line.strip()
@@ -270,7 +268,6 @@ jobs:
               if any(x in line for x in ['当前时间', '当前版本', '使用配置', '本次执行', '账号数', '开始执行', '---']): continue
               keep.append(line)
 
-          # 统一签到状态描述
           joined = '\n'.join(keep)
           if '✅' in joined:
               status = '✅ 签到成功'
@@ -345,7 +342,169 @@ jobs:
           node jd_sign.js
 
       # ─────────────────────────────────────────
-      # 5. Server酱推送汇总
+      # 5. Epic 免费游戏
+      # ─────────────────────────────────────────
+      - name: Epic Free Games
+        id: epic
+        run: |
+          python3 - << 'EOF'
+          import requests, os
+          from datetime import datetime, timezone
+
+          lines = ['🎮 Epic 本周免费游戏']
+
+          try:
+              url = 'https://store-site-backend-static.ak.epicgames.com/freeGamesPromotions?locale=zh-CN&country=CN&allowCountries=CN'
+              r = requests.get(url, timeout=15)
+              data = r.json()
+              games = data['data']['Catalog']['searchStore']['elements']
+
+              free_now = []
+              free_next = []
+
+              for game in games:
+                  title = game.get('title', '未知游戏')
+                  promos = game.get('promotions')
+                  if not promos:
+                      continue
+                  for offer in promos.get('promotionalOffers', []):
+                      for detail in offer.get('promotionalOffers', []):
+                          if detail.get('discountSetting', {}).get('discountPercentage', 99) == 0:
+                              free_now.append({'title': title, 'end': detail.get('endDate', '')})
+                  for offer in promos.get('upcomingPromotionalOffers', []):
+                      for detail in offer.get('promotionalOffers', []):
+                          if detail.get('discountSetting', {}).get('discountPercentage', 99) == 0:
+                              free_next.append({'title': title, 'start': detail.get('startDate', '')})
+
+              if free_now:
+                  lines.append('本周免费:')
+                  for g in free_now:
+                      try:
+                          end_str = datetime.fromisoformat(g['end'].replace('Z', '+00:00')).strftime('%m月%d日')
+                      except:
+                          end_str = ''
+                      lines.append(f"  🆓 {g['title']}" + (f"（至 {end_str}）" if end_str else ''))
+              else:
+                  lines.append('本周暂无免费游戏')
+
+              if free_next:
+                  lines.append('下周免费预告:')
+                  for g in free_next:
+                      try:
+                          start_str = datetime.fromisoformat(g['start'].replace('Z', '+00:00')).strftime('%m月%d日')
+                      except:
+                          start_str = ''
+                      lines.append(f"  🔜 {g['title']}" + (f"（{start_str} 开始）" if start_str else ''))
+
+          except Exception as e:
+              lines.append(f"⚠️ 获取失败: {e}")
+
+          result = '\n'.join(lines)
+          print(result)
+          with open(os.environ['GITHUB_ENV'], 'a') as f:
+              f.write(f"EPIC_RESULT<<ENDEPIC\n{result}\nENDEPIC\n")
+          EOF
+
+      # ─────────────────────────────────────────
+      # 6. Steam 特惠
+      # ─────────────────────────────────────────
+      - name: Steam Sales
+        id: steam
+        run: |
+          python3 - << 'EOF'
+          import requests, os
+
+          lines = ['🎮 Steam 今日特惠 Top 10']
+
+          try:
+              url = 'https://store.steampowered.com/api/featuredcategories?cc=cn&l=schinese'
+              r = requests.get(url, timeout=15)
+              data = r.json()
+              specials = data.get('specials', {}).get('items', [])[:10]
+
+              if specials:
+                  for item in specials:
+                      name = item.get('name', '未知')
+                      discount = item.get('discount_percent', 0)
+                      final = item.get('final_price', 0) / 100
+                      original = item.get('original_price', 0) / 100
+                      if discount > 0:
+                          lines.append(f"  🏷 {name}")
+                          lines.append(f"     -{discount}% ¥{original:.0f} → ¥{final:.0f}")
+              else:
+                  lines.append('暂无特惠数据')
+
+          except Exception as e:
+              lines.append(f"⚠️ 获取失败: {e}")
+
+          result = '\n'.join(lines)
+          print(result)
+          with open(os.environ['GITHUB_ENV'], 'a') as f:
+              f.write(f"STEAM_RESULT<<ENDSTEAM\n{result}\nENDSTEAM\n")
+          EOF
+
+      # ─────────────────────────────────────────
+      # 7. 每日汇率
+      # ─────────────────────────────────────────
+      - name: Exchange Rates
+        id: exchange
+        run: |
+          python3 - << 'EOF'
+          import requests, os
+          from datetime import datetime, timezone, timedelta
+
+          lines = ['💱 今日汇率']
+          cst = datetime.now(timezone(timedelta(hours=8))).strftime('%Y-%m-%d')
+          lines.append(f"更新时间: {cst}")
+
+          try:
+              r = requests.get('https://open.er-api.com/v6/latest/CNY', timeout=10)
+              data = r.json()
+              rates = data.get('rates', {})
+
+              def foreign_to_cny(code):
+                  rate = rates.get(code)
+                  if rate and rate != 0:
+                      return round(1 / rate, 4)
+                  return None
+
+              pairs_to_cny = [
+                  ('MYR', '马币', '🇲🇾'),
+                  ('USD', '美元', '🇺🇸'),
+                  ('EUR', '欧元', '🇪🇺'),
+                  ('SGD', '新币', '🇸🇬'),
+              ]
+              pairs_from_cny = [
+                  ('JPY', '日元', '🇯🇵'),
+                  ('KRW', '韩元', '🇰🇷'),
+                  ('HKD', '港元', '🇭🇰'),
+              ]
+
+              lines.append('')
+              lines.append('1 外币 → 人民币:')
+              for code, name, flag in pairs_to_cny:
+                  val = foreign_to_cny(code)
+                  if val:
+                      lines.append(f"  {flag} 1 {name} = {val} 元")
+
+              lines.append('')
+              lines.append('1 人民币 → 外币:')
+              for code, name, flag in pairs_from_cny:
+                  rate = rates.get(code)
+                  if rate:
+                      lines.append(f"  {flag} 1 元 = {round(rate, 4)} {name}")
+
+          except Exception as e:
+              lines.append(f"⚠️ 获取失败: {e}")
+
+          result = '\n'.join(lines)
+          print(result)
+          with open(os.environ['GITHUB_ENV'], 'a') as f:
+              f.write(f"EXCHANGE_RESULT<<ENDEXCHANGE\n{result}\nENDEXCHANGE\n")
+          EOF
+
+      # ─────────────────────────────────────────
+      # 8. Server酱推送汇总
       # ─────────────────────────────────────────
       - name: Push to Server酱
         env:
@@ -360,13 +519,16 @@ jobs:
               exit(0)
 
           now = datetime.datetime.now(datetime.timezone(datetime.timedelta(hours=8))).strftime("%Y-%m-%d %H:%M")
-          title = f"📋 每日签到报告 {now}"
+          title = f"📋 每日报告 {now}"
 
           sections = [
               os.environ.get('BILIBILI_RESULT', '📺 Bilibili: 未运行'),
               os.environ.get('JUEJIN_RESULT',   '🪙 掘金: 未运行'),
               os.environ.get('BAIDU_RESULT',     '☁️ 百度网盘: 未运行'),
               os.environ.get('JD_RESULT',        '🛒 京东: 未运行'),
+              os.environ.get('EPIC_RESULT',      '🎮 Epic: 未运行'),
+              os.environ.get('STEAM_RESULT',     '🎮 Steam: 未运行'),
+              os.environ.get('EXCHANGE_RESULT',  '💱 汇率: 未运行'),
           ]
           desp = '\n\n---\n\n'.join(sections)
 
