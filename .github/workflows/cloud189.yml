@@ -17,11 +17,17 @@ jobs:
       - name: Install cloud189-sdk
         run: npm install cloud189-sdk
 
+      - name: Debug package
+        run: node -e "const pkg = require('cloud189-sdk'); console.log('Package exports:', Object.keys(pkg)); console.log('Full export:', pkg);"
+
       - name: Write script
         run: |
           cat > cloud189_sign.js << 'JSEOF'
-          const Cloud189 = require('cloud189-sdk');
-
+          const pkg = require('cloud189-sdk');
+          console.log('Available exports:', Object.keys(pkg));
+          
+          const Cloud189 = pkg.Cloud189 || pkg.default || pkg;
+          
           const username = process.env.TY_USERNAME;
           const password = process.env.TY_PASSWORD;
 
