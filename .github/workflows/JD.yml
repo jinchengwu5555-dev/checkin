@@ -1,4 +1,4 @@
-name: JD Checkin
+name: JD
 on:
   workflow_dispatch:
   schedule:
