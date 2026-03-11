@@ -1,8 +1,7 @@
-name: Juejin Helper 2026 Perfect
+name: Juejin Helper Pro 2026 Final
 
 on:
   schedule:
-    # 北京/槟城时间 08:30 执行 (UTC 00:30)
     - cron: '30 0 * * *'
   workflow_dispatch:
 
@@ -10,7 +9,6 @@ jobs:
   juejin_task:
     runs-on: ubuntu-latest
     env:
-      # 提前适配 GitHub 2026 年 6 月的 Node.js 策略
       FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
     steps:
       - name: Checkout
@@ -19,7 +17,7 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: '22' # 升级到 22 版，消除弃用警告
+          node-version: '22'
 
       - name: Run Automation
         env:
@@ -34,85 +32,89 @@ jobs:
           const cookies = process.env.JUEJIN_COOKIES ? process.env.JUEJIN_COOKIES.split('#') : [];
           const pushKey = process.env.PUSH_KEY;
           
-          // 2026 双协议支持
-          const AID_APP = "1931"; 
-          const AID_WEB = "2608";
-          const generateUUID = () => "71439" + Math.floor(Math.random() * 1000000000);
+          const AID = "2608"; // 统一使用 Web ID 以获取更全的数据展示
+          const generateUUID = () => "7143" + Math.floor(Math.random() * 1000000000);
           
-          let reportLines = ["📦 掘金助手完美版报告 (" + new Date().toLocaleString('zh-CN', {timeZone: 'Asia/Shanghai'}) + ")"];
-
           async function executeTask(cookie, index) {
             const uuid = generateUUID();
-            const APP_PARAMS = "?aid=" + AID_APP + "&uuid=" + uuid + "&app_name=juejin_sdk&device_platform=android";
-            const WEB_PARAMS = "?aid=" + AID_WEB + "&uuid=" + uuid;
+            const PARAMS = "?aid=" + AID + "&uuid=" + uuid;
             
             const api = axios.create({
               baseURL: 'https://api.juejin.cn',
               timeout: 15000,
               headers: {
                 'Cookie': cookie,
-                'User-Agent': 'Mozilla/5.0 (Linux; Android 12; SM-G991B) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Mobile Safari/537.36 Juejin/Android/6.0.1',
-                'Host': 'api.juejin.cn',
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
                 'Origin': 'https://juejin.cn',
                 'Referer': 'https://juejin.cn/',
                 'Content-Type': 'application/json'
               }
             });
 
-            let logs = ["【账号 " + (index + 1) + "】"];
+            let report = [];
 
             try {
-              // 1. 每日签到 (App 模式)
-              const checkIn = await api.post("/growth_api/v1/check_in" + APP_PARAMS, {});
+              // 0. 获取用户信息
+              const userRes = await api.get("/user_api/v1/user/get" + PARAMS);
+              const userName = userRes.data?.data?.user_name || "未知掘友";
+              report.push("掘友: " + userName);
+
+              // 1. 每日签到
+              const checkIn = await api.post("/growth_api/v1/check_in" + PARAMS, {});
               if (checkIn.data?.err_no === 0) {
-                logs.push("✅ 签到成功: +" + checkIn.data.data.incr_point + " 矿石");
-              } else if (checkIn.data?.err_no === 20001 || (checkIn.data?.err_msg && checkIn.data.err_msg.includes("已完成签到"))) {
-                logs.push("ℹ️ 状态: 今日已签到过");
+                report.push("✅ 签到成功: +" + checkIn.data.data.incr_point + " 矿石");
               } else {
-                logs.push("❌ 签到异常: " + (checkIn.data?.err_msg || "未知错误"));
+                report.push("ℹ️ 签到状态: " + (checkIn.data?.err_no === 20001 ? "今日已签到过" : checkIn.data?.err_msg));
               }
 
-              // 2. 免费抽奖 (App 模式)
-              const config = await api.get("/growth_api/v1/lottery_config/get" + APP_PARAMS);
-              if (config.data?.data?.free_count > 0) {
-                const draw = await api.post("/growth_api/v1/lottery/draw" + APP_PARAMS, {});
-                logs.push(draw.data?.err_no === 0 ? "🎁 抽奖结果: " + draw.data.data.lottery_name : "🎁 抽奖失败");
-              } else {
-                logs.push("🎫 抽奖提示: 今日无免费机会");
-              }
-
-              // 3. 沾喜气 (双模兜底补丁)
+              // 2. 沾喜气 (修复版路由)
               try {
-                // 首先尝试 Web 路由，这是目前最稳的沾喜气方式
-                const history = await api.post("/growth_api/v1/lottery_history/global_big" + WEB_PARAMS, { page_no: 1, page_size: 5 });
+                // 强制使用动态获取的历史 ID
+                const history = await api.post("/growth_api/v1/lottery_history/global_big" + PARAMS, { page_no: 1, page_size: 5 });
                 const luckyId = history.data?.data?.lotteries?.[0]?.history_id || "7143943034230636551";
-                
-                const dip = await api.post("/growth_api/v1/lottery_lucky/dip_lucky" + WEB_PARAMS, { lottery_history_id: luckyId });
-                if (dip.data?.err_no === 0) {
-                  logs.push("✨ 沾喜气成功: +" + dip.data.data.dip_value + " 点");
-                } else {
-                  logs.push("✨ 沾喜气: " + (dip.data?.err_msg || "今日已沾"));
-                }
-              } catch (e) {
-                logs.push("✨ 沾喜气任务由于路由波动跳过");
+                const dip = await api.post("/growth_api/v1/lottery_lucky/dip_lucky" + PARAMS, { lottery_history_id: luckyId });
+                report.push(dip.data?.err_no === 0 ? "✨ 沾喜气: +" + dip.data.data.dip_value + " 幸运值" : "✨ 沾喜气: " + dip.data?.err_msg);
+              } catch (e) { report.push("✨ 沾喜气: 任务跳过"); }
+
+              // 3. 免费抽奖
+              const config = await api.get("/growth_api/v1/lottery_config/get" + PARAMS);
+              if (config.data?.data?.free_count > 0) {
+                const draw = await api.post("/growth_api/v1/lottery/draw" + PARAMS, {});
+                report.push(draw.data?.err_no === 0 ? "🎁 抽奖结果: " + draw.data.data.lottery_name : "🎁 抽奖失败");
+              } else {
+                report.push("🎫 抽奖提示: 今日无免费机会");
               }
+
+              // 4. 资产统计 (仿照用户上传图片的样式)
+              const counts = await api.get("/growth_api/v1/get_counts" + PARAMS);
+              const curPoint = await api.get("/growth_api/v1/get_cur_point" + PARAMS);
+              const luckyRes = await api.get("/growth_api/v1/get_lucky_value" + PARAMS);
+
+              if (counts.data?.data) {
+                report.push("连续签到天数: " + counts.data.data.cont_count);
+                report.push("累计签到天数: " + counts.data.data.sum_count);
+              }
+              if (curPoint.data) report.push("当前矿石数: " + curPoint.data.data);
+              if (luckyRes.data) report.push("当前幸运值: " + luckyRes.data.data + "/6000");
 
             } catch (err) {
-              logs.push("⚠️ 运行异常: " + err.message);
+              report.push("⚠️ 运行异常: " + err.message);
             }
-            return logs.join('\n');
+            return report.join('\n');
           }
 
           async function main() {
             if (cookies.length === 0) return console.log("未检测到 COOKIES");
+            let finalOutput = ["🔹 稀土掘金自动化中心"];
             for (let i = 0; i < cookies.length; i++) {
+              console.log("正在执行账号 " + (index = i + 1));
               const res = await executeTask(cookies[i], i);
-              reportLines.push(res);
+              finalOutput.push("\n" + res + "\n" + "=".repeat(20));
             }
-            const output = reportLines.join('\n\n');
-            console.log(output);
+            const message = finalOutput.join('\n');
+            console.log(message);
             if (pushKey) {
-              const barkUrl = "https://api.day.app/" + pushKey + "/" + encodeURIComponent("掘金报告") + "/" + encodeURIComponent(output) + "?isArchive=1";
+              const barkUrl = "https://api.day.app/" + pushKey + "/" + encodeURIComponent("掘金报告") + "/" + encodeURIComponent(message) + "?isArchive=1";
               await axios.get(barkUrl).catch(() => {});
             }
           }
