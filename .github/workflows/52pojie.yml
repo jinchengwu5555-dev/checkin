@@ -1,8 +1,7 @@
-name: 52Pojie Helper 2026
+name: 52Pojie Pro 2026
 
 on:
   schedule:
-    # 槟城时间 09:00 (UTC 01:00) 
     - cron: '0 1 * * *'
   workflow_dispatch:
 
@@ -22,7 +21,6 @@ jobs:
 
       - name: Run Automation
         env:
-          # 格式: 完整的 Cookie 字符串，多账号用 @ 分隔
           POJIE_COOKIES: ${{ secrets.POJIE_COOKIES }}
           PUSH_KEY: ${{ secrets.PUSH_KEY }}
         run: |
@@ -33,65 +31,73 @@ jobs:
 
           const cookies = process.env.POJIE_COOKIES ? process.env.POJIE_COOKIES.split('@') : [];
           const pushKey = process.env.PUSH_KEY;
-          let finalReport = ["🏴‍☠️ 吾爱破解自动化报告"];
+          let finalReport = ["🏴‍☠️ 吾爱破解资产看板"];
 
           async function executeTask(cookie, index) {
             const api = axios.create({
               timeout: 20000,
               headers: {
-                'Cookie': cookie,
+                'Cookie': cookie.trim(),
                 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
-                'Referer': 'https://www.52pojie.cn/index.php',
-                'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,apple-touch-icon-next,image/apng,*/*;q=0.8'
+                'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
+                'Connection': 'keep-alive'
               }
             });
 
             let report = [];
             try {
-              // 1. 获取用户信息与资产 (模拟图片样式)
+              // 1. 访问个人主页获取数据
               const homeRes = await api.get('https://www.52pojie.cn/home.php?mod=spacecp&ac=credit&showuser=1');
               const html = homeRes.data;
-              
+
+              // 检查是否被 WAF 拦截 (验证码页面)
+              if (html.includes('安全验证') || html.includes('Cloudflare')) {
+                report.push("❌ 访问受限: GitHub IP 被 52 拦截，触发了验证码");
+                return report.join('\n');
+              }
+
+              // 提取用户名
               const userNameMatch = html.match(/class=\"vwmy\">(.+?)<\/a>/);
               const userName = userNameMatch ? userNameMatch[1] : "未知会员";
               report.push("掘友: " + userName);
 
-              // 2. 执行签到
-              // 52Pojie 签到逻辑：访问申请任务链接即可
+              if (userName === "未知会员") {
+                report.push("❌ 登录失败: Cookie 已失效或格式错误");
+                return report.join('\n');
+              }
+
+              // 2. 执行签到任务
               const checkInRes = await api.get('https://www.52pojie.cn/home.php?mod=task&do=apply&id=2');
               const statusMsg = checkInRes.data;
 
               if (statusMsg.includes("任务已成功完成")) {
                 report.push("✅ 签到成功: 经验 +1 / 吾爱币 +1");
-              } else if (statusMsg.includes("不是进行中的任务") || statusMsg.includes("您已经完成过此任务")) {
-                report.push("ℹ️ 签到状态: 今日已完成签到");
-              } else if (statusMsg.includes("抱歉，您尚未登录")) {
-                report.push("❌ 状态: Cookie 已失效");
               } else {
-                report.push("⚠️ 签到反馈: 任务处于维护中或需手动验证");
+                report.push("ℹ️ 签到状态: 今日已完成或任务暂不可用");
               }
 
-              // 3. 获取详细资产数值 (正则表达式匹配)
-              const coinMatch = html.match(/吾爱币: <\/em>(.+?)&nbsp;/);
-              const expMatch = html.match(/积分: <\/em>(.+?)&nbsp;/);
-              const prestigeMatch = html.match(/威望: <\/em>(.+?) <\/li>/);
+              // 3. 资产统计 (仿照掘金图片样式)
+              const coin = (html.match(/吾爱币: <\/em>(.+?)&nbsp;/) || [])[1] || "0";
+              const credit = (html.match(/积分: <\/em>(.+?)&nbsp;/) || [])[1] || "0";
+              const prestige = (html.match(/威望: <\/em>(.+?) <\/li>/) || [])[1] || "0";
 
-              if (coinMatch) report.push("当前吾爱币: " + coinMatch[1]);
-              if (expMatch) report.push("当前总积分: " + expMatch[1]);
-              if (prestigeMatch) report.push("当前威望值: " + prestigeMatch[1]);
-
+              report.push("当前吾爱币: " + coin);
+              report.push("当前总积分: " + credit);
+              report.push("当前威望值: " + prestige);
+              // 趣味映射：把吾爱币当作 Bug 数 (模仿你的图片)
+              report.push("====================");
+              report.push("Bug: " + prestige); 
               report.push("====================");
 
             } catch (err) {
-              report.push("⚠️ 运行异常: " + (err.response ? "HTTP " + err.response.status : "网络连接超时"));
+              report.push("⚠️ 运行异常: " + err.message);
             }
             return report.join('\n');
           }
 
           async function main() {
-            if (cookies.length === 0) return console.log("未配置 POJIE_COOKIES");
+            if (cookies.length === 0) return console.log("未配置 Secret");
             for (let i = 0; i < cookies.length; i++) {
-              console.log("正在执行账号 " + (i + 1));
               const res = await executeTask(cookies[i], i);
               finalReport.push("\n" + res);
             }
