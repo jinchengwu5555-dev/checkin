@@ -24,21 +24,23 @@ jobs:
 
           async function sign() {
             try {
-              const res = await axios.get(
-                'https://api.m.jd.com/client.action?functionId=signBeanAct',
+              const res = await axios.post(
+                'https://api.m.jd.com/client.action',
+                'functionId=signBeanAct&appid=ld&body=%7B%22rnVersion%22%3A%228.1.0%22%2C%22channel%22%3A1%2C%22os%22%3A%22apple%22%2C%22enAli%22%3A%221%22%7D',
                 {
                   headers: {
                     'Cookie': cookie,
-                    'User-Agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 16_0 like Mac OS X)',
-                    'Referer': 'https://bean.m.jd.com/'
+                    'User-Agent': 'JDMobileIOS/13.0.2 (iPhone; iOS 16.0; Scale/3.00)',
+                    'Content-Type': 'application/x-www-form-urlencoded',
+                    'Referer': 'https://bean.m.jd.com/',
+                    'Host': 'api.m.jd.com'
                   }
                 }
               );
-              console.log('京东签到结果:', JSON.stringify(res.data, null, 2));
-            } catch(e) {
-              console.error('签到失败:', e.message);
-            }
-          }
-
-          sign();
-          EOF
+              const data = res.data;
+              console.log('京东签到原始结果:', JSON.stringify(data, null, 2));
+              if (data.data) {
+                const d = data.data;
+                if (d.status === 1) {
+                  console.log('✅ 签到成功！获得京豆:', d.signInfo?.signScore || 0);
+                }
