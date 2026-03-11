@@ -1,0 +1,23 @@
+name: Daily Checkin
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '30 2 * * *'
+
+jobs:
+  checkin:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dailycheckin
+        run: pip install dailycheckin
+
+      - name: Write config
+        run: echo '${{ secrets.CHECKIN_CONFIG }}' > config.json
+
+      - name: Run checkin
+        run: dailycheckin
