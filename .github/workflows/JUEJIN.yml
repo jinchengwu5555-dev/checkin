@@ -1,8 +1,8 @@
-name: Juejin Helper Pro 2026
+name: Juejin Helper 2026 Final
 
 on:
   schedule:
-    # 每天北京/槟城时间 08:30 执行 (UTC 00:30)
+    # 北京/槟城时间 08:30 执行 (UTC 00:30)
     - cron: '30 0 * * *'
   workflow_dispatch: # 支持手动测试
 
@@ -30,15 +30,15 @@ jobs:
 
           const cookies = process.env.JUEJIN_COOKIES ? process.env.JUEJIN_COOKIES.split('#') : [];
           const pushKey = process.env.PUSH_KEY;
+          const aid = "1931"; // 移动端协议
           
-          // 2026 移动端核心标识
-          const aid = "1931"; 
-          const uuid = "7143" + Math.floor(Math.random() * 1000000000);
-          const PARAMS = "?aid=" + aid + "&uuid=" + uuid + "&app_name=juejin_sdk&device_platform=android";
-          
+          const generateUUID = () => "71439" + Math.floor(Math.random() * 1000000000);
           let reportLines = ["📦 掘金助手运行报告 (" + new Date().toLocaleString('zh-CN', {timeZone: 'Asia/Shanghai'}) + ")"];
 
           async function executeTask(cookie, index) {
+            const uuid = generateUUID();
+            const PARAMS = "?aid=" + aid + "&uuid=" + uuid + "&app_name=juejin_sdk&device_platform=android";
+            
             const api = axios.create({
               baseURL: 'https://api.juejin.cn',
               timeout: 15000,
@@ -48,7 +48,7 @@ jobs:
                 'Host': 'api.juejin.cn',
                 'Origin': 'https://juejin.cn',
                 'Referer': 'https://juejin.cn/',
-                'Content-Type': 'application/json; charset=utf-8'
+                'Content-Type': 'application/json'
               }
             });
 
@@ -57,10 +57,13 @@ jobs:
             try {
               // 1. 每日签到
               const checkIn = await api.post("/growth_api/v1/check_in" + PARAMS, {});
-              if (checkIn.data && checkIn.data.err_no === 0) {
-                logs.push("✅ 签到成功: +" + checkIn.data.data.incr_point + " 矿石");
+              const resData = checkIn.data;
+              if (resData.err_no === 0) {
+                logs.push("✅ 签到成功: +" + resData.data.incr_point + " 矿石");
+              } else if (resData.err_no === 20001 || resData.err_msg.includes("已完成签到")) {
+                logs.push("ℹ️ 状态: 今日已签到过");
               } else {
-                logs.push(checkIn.data?.err_no === 20001 ? "ℹ️ 今日已签到过" : "❌ 签到失败: " + (checkIn.data?.err_msg || "未知错误"));
+                logs.push("❌ 签到异常: " + (resData.err_msg || "未知错误"));
               }
 
               await new Promise(r => setTimeout(r, 2000));
@@ -69,26 +72,26 @@ jobs:
               const config = await api.get("/growth_api/v1/lottery_config/get" + PARAMS);
               if (config.data?.data?.free_count > 0) {
                 const draw = await api.post("/growth_api/v1/lottery/draw" + PARAMS, {});
-                logs.push(draw.data?.err_no === 0 ? "🎁 抽奖结果: " + draw.data.data.lottery_name : "🎁 抽奖失败");
+                logs.push(draw.data.err_no === 0 ? "🎁 抽奖结果: " + draw.data.data.lottery_name : "🎁 抽奖失败");
               } else {
-                logs.push("🎫 抽奖提示: 今日无免费机会");
+                logs.push("🎫 抽奖提示: 无免费机会");
               }
 
-              // 3. 沾喜气 (修复移动端路由 404)
-              // 在 aid=1931 模式下，获取全局大奖历史的接口略有不同
+              // 3. 沾喜气 (修复 404 路由)
+              // 针对移动端 aid=1931，路由微调为 global_big
               try {
+                // 先尝试获取最新大奖列表
                 const history = await api.post("/growth_api/v1/lottery_history/global_big" + PARAMS, { page_no: 1, page_size: 5 });
-                // 如果获取失败，使用兜底 ID
                 const luckyId = history.data?.data?.lotteries?.[0]?.history_id || "7143943034230636551";
-                const dip = await api.post("/growth_api/v1/lottery_lucky/dip_lucky" + PARAMS, { lottery_history_id: luckyId });
                 
-                if (dip.data?.err_no === 0) {
+                const dip = await api.post("/growth_api/v1/lottery_lucky/dip_lucky" + PARAMS, { lottery_history_id: luckyId });
+                if (dip.data.err_no === 0) {
                   logs.push("✨ 沾喜气成功: +" + dip.data.data.dip_value + " 点");
                 } else {
-                  logs.push("✨ 沾喜气: " + (dip.data?.err_msg || "今日已沾过"));
+                  logs.push("✨ 沾喜气: " + (dip.data.err_msg || "今日已沾"));
                 }
               } catch (e) {
-                logs.push("✨ 沾喜气任务跳过 (接口微调中)");
+                logs.push("✨ 沾喜气任务跳过 (接口维护中)");
               }
 
             } catch (err) {
@@ -98,7 +101,7 @@ jobs:
           }
 
           async function main() {
-            if (cookies.length === 0) return;
+            if (cookies.length === 0) return console.log("未检测到 COOKIES");
             for (let i = 0; i < cookies.length; i++) {
               const res = await executeTask(cookies[i], i);
               reportLines.push(res);
