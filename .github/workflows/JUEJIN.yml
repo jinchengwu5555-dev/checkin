@@ -1,4 +1,4 @@
-name: Juejin Helper 2026 Final
+name: Juejin Helper Pro 2026 Final
 
 on:
   schedule:
@@ -30,7 +30,7 @@ jobs:
 
           const cookies = process.env.JUEJIN_COOKIES ? process.env.JUEJIN_COOKIES.split('#') : [];
           const pushKey = process.env.PUSH_KEY;
-          const aid = "1931"; // 移动端协议
+          const aid = "1931"; // 移动端协议，更稳
           
           const generateUUID = () => "71439" + Math.floor(Math.random() * 1000000000);
           let reportLines = ["📦 掘金助手运行报告 (" + new Date().toLocaleString('zh-CN', {timeZone: 'Asia/Shanghai'}) + ")"];
@@ -48,7 +48,7 @@ jobs:
                 'Host': 'api.juejin.cn',
                 'Origin': 'https://juejin.cn',
                 'Referer': 'https://juejin.cn/',
-                'Content-Type': 'application/json'
+                'Content-Type': 'application/json; charset=utf-8'
               }
             });
 
@@ -74,15 +74,19 @@ jobs:
                 const draw = await api.post("/growth_api/v1/lottery/draw" + PARAMS, {});
                 logs.push(draw.data.err_no === 0 ? "🎁 抽奖结果: " + draw.data.data.lottery_name : "🎁 抽奖失败");
               } else {
-                logs.push("🎫 抽奖提示: 无免费机会");
+                logs.push("🎫 抽奖提示: 今日无免费机会");
               }
 
-              // 3. 沾喜气 (修复 404 路由)
-              // 针对移动端 aid=1931，路由微调为 global_big
+              // 3. 沾喜气 (针对移动端路由进行适配)
               try {
-                // 先尝试获取最新大奖列表
+                // 如果获取历史失败，直接用这个固定的历史ID（掘金的一个长期有效ID）
+                let luckyId = "7143943034230636551"; 
+                
+                // 尝试获取最新的历史记录接口
                 const history = await api.post("/growth_api/v1/lottery_history/global_big" + PARAMS, { page_no: 1, page_size: 5 });
-                const luckyId = history.data?.data?.lotteries?.[0]?.history_id || "7143943034230636551";
+                if (history.data?.data?.lotteries?.[0]?.history_id) {
+                  luckyId = history.data.data.lotteries[0].history_id;
+                }
                 
                 const dip = await api.post("/growth_api/v1/lottery_lucky/dip_lucky" + PARAMS, { lottery_history_id: luckyId });
                 if (dip.data.err_no === 0) {
@@ -91,7 +95,9 @@ jobs:
                   logs.push("✨ 沾喜气: " + (dip.data.err_msg || "今日已沾"));
                 }
               } catch (e) {
-                logs.push("✨ 沾喜气任务跳过 (接口维护中)");
+                // 如果路由彻底失效，尝试 Web 端路由作为最终补丁
+                const dipPatch = await api.post("/growth_api/v1/lottery_lucky/dip_lucky?aid=2608", { lottery_history_id: "7143943034230636551" });
+                logs.push(dipPatch.data.err_no === 0 ? "✨ 沾喜气成功(补丁)" : "✨ 沾喜气任务跳过");
               }
 
             } catch (err) {
