@@ -14,40 +14,95 @@ jobs:
         with:
           node-version: '18'
 
-      - name: Install cloud189-sdk
-        run: npm install cloud189-sdk
+      - name: Install dependencies
+        run: npm install axios crypto-js
 
       - name: Write script
         run: |
           cat > cloud189_sign.js << 'JSEOF'
-          const { CloudAuthClient, CloudClient, MemoryStore } = require('cloud189-sdk');
+          const axios = require('axios');
+          const crypto = require('crypto-js');
 
           const username = process.env.TY_USERNAME;
           const password = process.env.TY_PASSWORD;
 
-          async function main() {
+          const client = axios.create({
+            headers: {
+              'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+              'Referer': 'https://cloud.189.cn/web/login.html'
+            },
+            withCredentials: true
+          });
+
+          async function login() {
             try {
-              const store = new MemoryStore();
-              const authClient = new CloudAuthClient(username, password, store);
-              
+              // 获取登录页面
+              const loginPage = await client.get('https://cloud.189.cn/api/portal/loginUrl.action?redirectURL=https://cloud.189.cn/web/redirect.html');
+              const loginUrl = loginPage.data.loginUrl;
+
+              // 获取加密参数
+              const encryptPage = await client.get(loginUrl);
+              const lt = encryptPage.data.match(/name="lt" value="(.*?)"/)[1];
+              const returnUrl = encryptPage.data.match(/returnUrl = '(.*?)'/)[1];
+              const paramId = encryptPage.data.match(/paramId = "(.*?)"/)[1];
+              const j_rsaKey = encryptPage.data.match(/j_rsaKey" value="(.*?)"/)[1];
+
+              // RSA 加密密码
+              const encrypt = new JSEncrypt();
+              encrypt.setPublicKey(j_rsaKey);
+              const encryptedPassword = encrypt.encrypt(password);
+
               // 登录
-              const session = await authClient.loginByPassword();
-              console.log('登录成功');
+              const loginData = new URLSearchParams({
+                appKey: 'cloud',
+                accountType: '01',
+                userName: `{RSA}${encrypt.encrypt(username)}`,
+                password: `{RSA}${encryptedPassword}`,
+                validateCode: '',
+                captchaToken: '',
+                returnUrl: returnUrl,
+                mailSuffix: '@189.cn',
+                dynamicCheck: 'FALSE',
+                clientType: '1',
+                cb_SaveName: '0',
+                isOauth2: 'false',
+                state: '',
+                paramId: paramId,
+                lt: lt
+              });
 
-              const client = new CloudClient(authClient);
-
-              const res1 = await client.userSign();
-              console.log('个人签到:', res1.isSign ? '今日已签' : `获得 ${res1.netdiskBonus}M 空间`);
-
-              const res2 = await client.familySign();
-              if (res2 && res2.length > 0) {
-                res2.forEach(r => {
-                  console.log('家庭签到:', r.isSign ? '今日已签' : `获得 ${r.bonusSpace}M 空间`);
-                });
+              const loginResult = await client.post(loginUrl, loginData);
+              
+              if (loginResult.data.result === 0) {
+                console.log('登录成功');
+                return true;
+              } else {
+                console.log('登录失败:', loginResult.data.msg);
+                return false;
               }
-            } catch(e) {
-              console.error('错误:', e.message);
-              console.error('详细错误:', e);
+            } catch (e) {
+              console.error('登录错误:', e.message);
+              return false;
+            }
+          }
+
+          async function userSign() {
+            try {
+              const res = await client.get('https://api.cloud.189.cn/mkt/userSign.action?rand=' + Date.now());
+              if (res.data.isSign) {
+                console.log('个人签到: 今日已签');
+              } else {
+                console.log('个人签到: 获得', res.data.netdiskBonus, 'M 空间');
+              }
+            } catch (e) {
+              console.error('个人签到错误:', e.message);
+            }
+          }
+
+          async function main() {
+            const loggedIn = await login();
+            if (loggedIn) {
+              await userSign();
             }
           }
 
