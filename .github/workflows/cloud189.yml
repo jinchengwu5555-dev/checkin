@@ -9,108 +9,110 @@ jobs:
     runs-on: ubuntu-latest
     environment: user
     steps:
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
+      - name: Setup Python
+        uses: actions/setup-python@v5
         with:
-          node-version: '18'
+          python-version: '3.11'
 
       - name: Install dependencies
-        run: npm install axios crypto-js
+        run: pip install requests rsa
 
       - name: Write script
         run: |
-          cat > cloud189_sign.js << 'JSEOF'
-          const axios = require('axios');
-          const crypto = require('crypto-js');
+          cat > cloud189_sign.py << 'PYEOF'
+          import requests
+          import rsa
+          import base64
+          import re
+          import os
+          from urllib.parse import urlparse, parse_qs
 
-          const username = process.env.TY_USERNAME;
-          const password = process.env.TY_PASSWORD;
+          username = os.environ['TY_USERNAME']
+          password = os.environ['TY_PASSWORD']
 
-          const client = axios.create({
-            headers: {
+          session = requests.Session()
+          session.headers.update({
               'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
               'Referer': 'https://cloud.189.cn/web/login.html'
-            },
-            withCredentials: true
-          });
+          })
 
-          async function login() {
-            try {
-              // 获取登录页面
-              const loginPage = await client.get('https://cloud.189.cn/api/portal/loginUrl.action?redirectURL=https://cloud.189.cn/web/redirect.html');
-              const loginUrl = loginPage.data.loginUrl;
+          def login():
+              try:
+                  # 获取登录URL
+                  r = session.get('https://cloud.189.cn/api/portal/loginUrl.action?redirectURL=https://cloud.189.cn/web/redirect.html')
+                  login_url = r.json()['loginUrl']
+                  print(f'登录URL: {login_url}')
 
-              // 获取加密参数
-              const encryptPage = await client.get(loginUrl);
-              const lt = encryptPage.data.match(/name="lt" value="(.*?)"/)[1];
-              const returnUrl = encryptPage.data.match(/returnUrl = '(.*?)'/)[1];
-              const paramId = encryptPage.data.match(/paramId = "(.*?)"/)[1];
-              const j_rsaKey = encryptPage.data.match(/j_rsaKey" value="(.*?)"/)[1];
+                  # 获取登录页面
+                  r = session.get(login_url)
+                  captcha_token = re.findall(r"captchaToken' value='(.+?)'", r.text)[0]
+                  lt = re.findall(r'lt = "(.+?)"', r.text)[0]
+                  return_url = re.findall(r"returnUrl = '(.+?)'", r.text)[0]
+                  param_id = re.findall(r'paramId = "(.+?)"', r.text)[0]
+                  j_rsa_key = re.findall(r'j_rsaKey" value="(\S+)"', r.text)[0]
+                  
+                  # RSA加密
+                  pub_key = rsa.PublicKey.load_pkcs1_openssl_pem(j_rsa_key.encode())
+                  encrypted_username = base64.b64encode(rsa.encrypt(username.encode(), pub_key)).decode()
+                  encrypted_password = base64.b64encode(rsa.encrypt(password.encode(), pub_key)).decode()
 
-              // RSA 加密密码
-              const encrypt = new JSEncrypt();
-              encrypt.setPublicKey(j_rsaKey);
-              const encryptedPassword = encrypt.encrypt(password);
+                  # 登录
+                  data = {
+                      'appKey': 'cloud',
+                      'accountType': '01',
+                      'userName': f'{{RSA}}{encrypted_username}',
+                      'password': f'{{RSA}}{encrypted_password}',
+                      'validateCode': '',
+                      'captchaToken': captcha_token,
+                      'returnUrl': return_url,
+                      'mailSuffix': '@189.cn',
+                      'dynamicCheck': 'FALSE',
+                      'clientType': '1',
+                      'cb_SaveName': '0',
+                      'isOauth2': 'false',
+                      'state': '',
+                      'paramId': param_id,
+                      'lt': lt
+                  }
 
-              // 登录
-              const loginData = new URLSearchParams({
-                appKey: 'cloud',
-                accountType: '01',
-                userName: `{RSA}${encrypt.encrypt(username)}`,
-                password: `{RSA}${encryptedPassword}`,
-                validateCode: '',
-                captchaToken: '',
-                returnUrl: returnUrl,
-                mailSuffix: '@189.cn',
-                dynamicCheck: 'FALSE',
-                clientType: '1',
-                cb_SaveName: '0',
-                isOauth2: 'false',
-                state: '',
-                paramId: paramId,
-                lt: lt
-              });
+                  r = session.post(login_url, data=data)
+                  result = r.json()
+                  
+                  if result.get('result') == 0:
+                      print('登录成功')
+                      # 跳转到云盘
+                      redirect_url = result.get('toUrl')
+                      if redirect_url:
+                          session.get(redirect_url)
+                      return True
+                  else:
+                      print(f'登录失败: {result.get("msg")}')
+                      return False
 
-              const loginResult = await client.post(loginUrl, loginData);
-              
-              if (loginResult.data.result === 0) {
-                console.log('登录成功');
-                return true;
-              } else {
-                console.log('登录失败:', loginResult.data.msg);
-                return false;
-              }
-            } catch (e) {
-              console.error('登录错误:', e.message);
-              return false;
-            }
-          }
+              except Exception as e:
+                  print(f'登录错误: {e}')
+                  import traceback
+                  traceback.print_exc()
+                  return False
 
-          async function userSign() {
-            try {
-              const res = await client.get('https://api.cloud.189.cn/mkt/userSign.action?rand=' + Date.now());
-              if (res.data.isSign) {
-                console.log('个人签到: 今日已签');
-              } else {
-                console.log('个人签到: 获得', res.data.netdiskBonus, 'M 空间');
-              }
-            } catch (e) {
-              console.error('个人签到错误:', e.message);
-            }
-          }
+          def user_sign():
+              try:
+                  r = session.get('https://api.cloud.189.cn/mkt/userSign.action')
+                  data = r.json()
+                  if data.get('isSign'):
+                      print('个人签到: 今日已签')
+                  else:
+                      print(f'个人签到: 获得 {data.get("netdiskBonus")}M 空间')
+              except Exception as e:
+                  print(f'个人签到错误: {e}')
 
-          async function main() {
-            const loggedIn = await login();
-            if (loggedIn) {
-              await userSign();
-            }
-          }
-
-          main();
-          JSEOF
+          if __name__ == '__main__':
+              if login():
+                  user_sign()
+          PYEOF
 
       - name: Run
         env:
           TY_USERNAME: ${{ secrets.TY_USERNAME }}
           TY_PASSWORD: ${{ secrets.TY_PASSWORD }}
-        run: node cloud189_sign.js
+        run: python cloud189_sign.py
