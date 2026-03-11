@@ -14,41 +14,202 @@ jobs:
         with:
           node-version: '18'
 
-      - name: Install cloud189-sdk
-        run: npm install cloud189-sdk
+      - name: Install dependencies
+        run: npm install axios
 
       - name: Write script
         run: |
           cat > cloud189_sign.js << 'JSEOF'
-          const { Cloud189 } = require('cloud189-sdk');
+          const axios = require('axios');
+          const crypto = require('crypto');
 
-          const username = process.env.TY_USERNAME;
-          const password = process.env.TY_PASSWORD;
+          const USERNAME = process.env.TY_USERNAME;
+          const PASSWORD = process.env.TY_PASSWORD;
+
+          const BASE_URL = 'https://cloud.189.cn';
+          const AUTH_URL = 'https://open.e.189.cn';
+
+          const client = axios.create({
+            timeout: 30000,
+            headers: {
+              'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+              'Referer': 'https://cloud.189.cn/',
+            },
+            withCredentials: true,
+          });
+
+          // 存储 cookie
+          let cookies = {};
+
+          function setCookies(response) {
+            const setCookie = response.headers['set-cookie'];
+            if (setCookie) {
+              setCookie.forEach(c => {
+                const [kv] = c.split(';');
+                const [k, v] = kv.split('=');
+                if (k && v) cookies[k.trim()] = v.trim();
+              });
+            }
+          }
+
+          function getCookieString() {
+            return Object.entries(cookies).map(([k, v]) => `${k}=${v}`).join('; ');
+          }
+
+          // RSA 加密密码
+          function rsaEncrypt(pubKey, text) {
+            const buf = Buffer.from(text, 'utf8');
+            return crypto.publicEncrypt(
+              { key: `-----BEGIN PUBLIC KEY-----\n${pubKey}\n-----END PUBLIC KEY-----`,
+                padding: crypto.constants.RSA_PKCS1_PADDING },
+              buf
+            ).toString('hex');
+          }
+
+          async function login() {
+            // 1. 获取登录参数
+            const paramRes = await client.get(`${AUTH_URL}/api/logbox/oauth2/loginSubmit.do`, {
+              params: { appId: '8025431004', version: '2.0' }
+            });
+            setCookies(paramRes);
+
+            const ltMatch = paramRes.data.match(/lt\s*=\s*"([^"]+)"/);
+            const reqIdMatch = paramRes.data.match(/reqId\s*=\s*"([^"]+)"/);
+            const pubKeyMatch = paramRes.data.match(/pubKey\s*=\s*"([^"]+)"/);
+
+            if (!ltMatch || !reqIdMatch || !pubKeyMatch) {
+              // 尝试备用登录方式
+              await loginV2();
+              return;
+            }
+
+            const lt = ltMatch[1];
+            const reqId = reqIdMatch[1];
+            const pubKey = pubKeyMatch[1];
+
+            const encPwd = rsaEncrypt(pubKey, PASSWORD);
+
+            // 2. 提交登录
+            const loginRes = await client.post(`${AUTH_URL}/api/logbox/oauth2/loginSubmit.do`, new URLSearchParams({
+              appKey: '8025431004',
+              version: '2.0',
+              accountType: '01',
+              userName: `{RSA}${Buffer.from(USERNAME).toString('hex')}`,
+              password: `{RSA}${encPwd}`,
+              validateCode: '',
+              captchaToken: '',
+              returnUrl: `${BASE_URL}/unifyAccountLogin.do`,
+              mailSuffix: '@189.cn',
+              lt,
+              reqId,
+              paramId: '',
+            }).toString(), {
+              headers: {
+                'Content-Type': 'application/x-www-form-urlencoded',
+                Cookie: getCookieString(),
+              }
+            });
+            setCookies(loginRes);
+
+            if (loginRes.data.result !== 0) {
+              throw new Error(`登录失败: ${loginRes.data.msg || JSON.stringify(loginRes.data)}`);
+            }
+
+            // 3. 跳转获取最终 cookie
+            const redirectUrl = loginRes.data.toUrl;
+            const redirectRes = await client.get(redirectUrl, {
+              headers: { Cookie: getCookieString() },
+              maxRedirects: 5,
+            });
+            setCookies(redirectRes);
+
+            console.log('登录成功');
+          }
+
+          async function userSign() {
+            const res = await client.get(`${BASE_URL}/mkt/userSign.action`, {
+              params: {
+                rand: Date.now(),
+                clientType: 'TELEANDROID',
+                version: '8.6.3',
+                model: 'Android',
+              },
+              headers: {
+                Cookie: getCookieString(),
+                'TS-SIGN': Date.now(),
+              }
+            });
+            setCookies(res);
+            return res.data;
+          }
+
+          async function getFamilyList() {
+            const res = await client.get(`${BASE_URL}/api/open/family/manage/getFamilyList.action`, {
+              params: { noCache: Math.random() },
+              headers: {
+                Cookie: getCookieString(),
+                Accept: 'application/json;charset=UTF-8',
+              }
+            });
+            return res.data.familyInfoResp || [];
+          }
+
+          async function familySign(familyId) {
+            const res = await client.get(`${BASE_URL}/api/open/family/manage/familyUserSign.action`, {
+              params: { familyId, noCache: Math.random() },
+              headers: {
+                Cookie: getCookieString(),
+                Accept: 'application/json;charset=UTF-8',
+              }
+            });
+            return res.data;
+          }
 
           async function main() {
             try {
-              const client = new Cloud189(username, password);
-              await client.login();
-              console.log('登录成功');
+              await login();
 
-              const res1 = await client.userSign();
-              console.log('个人签到:', res1.isSign ? '今日已签' : `获得 ${res1.netdiskBonus}M 空间`);
-
-              const res2 = await client.familySign();
-              if (res2 && res2.length > 0) {
-                res2.forEach(r => {
-                  console.log('家庭签到:', r.isSign ? '今日已签' : `获得 ${r.bonusSpace}M 空间`);
-                });
+              // 个人签到
+              try {
+                const signRes = await userSign();
+                if (signRes.isSign) {
+                  console.log('个人签到：今日已签到');
+                } else {
+                  console.log(`个人签到：获得 ${signRes.netdiskBonus}M 空间`);
+                }
+              } catch (e) {
+                console.error('个人签到失败:', e.message);
               }
-            } catch(e) {
+
+              // 家庭签到
+              try {
+                const families = await getFamilyList();
+                if (families.length === 0) {
+                  console.log('未加入家庭群组，跳过家庭签到');
+                } else {
+                  for (const family of families) {
+                    const res = await familySign(family.familyId);
+                    if (res.signStatus) {
+                      console.log(`家庭签到 [${family.remarkName || family.familyId}]：今日已签到`);
+                    } else {
+                      console.log(`家庭签到 [${family.remarkName || family.familyId}]：获得 ${res.bonusSpace}M 空间`);
+                    }
+                  }
+                }
+              } catch (e) {
+                console.error('家庭签到失败:', e.message);
+              }
+
+            } catch (e) {
               console.error('错误:', e.message);
+              process.exit(1);
             }
           }
 
           main();
           JSEOF
 
-      - name: Run
+      - name: Run Checkin
         env:
           TY_USERNAME: ${{ secrets.TY_USERNAME }}
           TY_PASSWORD: ${{ secrets.TY_PASSWORD }}
