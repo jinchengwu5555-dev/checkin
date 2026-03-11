@@ -28,6 +28,12 @@ jobs:
           async function main() {
             try {
               const authClient = new CloudAuthClient(username, password);
+              
+              // 获取登录表单和加密信息
+              await authClient.getLoginForm();
+              await authClient.getEncrypt();
+              
+              // 登录
               await authClient.loginByPassword();
               console.log('登录成功');
 
