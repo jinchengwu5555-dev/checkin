@@ -1,16 +1,16 @@
-name: Juejin Auto Helper
+name: Juejin Helper Pro
 
 on:
   schedule:
-    # 每天北京/槟城时间 08:30 自动执行 (UTC 00:30)
+    # 每天北京/槟城时间 08:30 执行 (UTC 00:30)
     - cron: '30 0 * * *'
-  workflow_dispatch: # 支持手动点击按钮执行
+  workflow_dispatch: # 支持手动点击按钮测试
 
 jobs:
   juejin_task:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout Code
+      - name: Checkout
         uses: actions/checkout@v4
 
       - name: Setup Node.js
@@ -18,9 +18,8 @@ jobs:
         with:
           node-version: '20'
 
-      - name: Run Juejin Script
+      - name: Run Automation
         env:
-          # 在 GitHub Settings -> Secrets -> Actions 中配置
           JUEJIN_COOKIES: ${{ secrets.JUEJIN_COOKIES }}
           PUSH_KEY: ${{ secrets.PUSH_KEY }}
         run: |
@@ -29,13 +28,23 @@ jobs:
           cat << 'EOF' > index.js
           const axios = require('axios');
 
-          // --- 核心常量 ---
-          const PARAMS = '?aid=2608&uuid='; // 掘金Web端核心标识，防止404
+          // --- 环境检查与参数初始化 ---
           const cookies = process.env.JUEJIN_COOKIES ? process.env.JUEJIN_COOKIES.split('#') : [];
           const pushKey = process.env.PUSH_KEY;
-          let reportLines = ["📅 掘金自动化任务报告 (" + new Date().toLocaleString() + ")"];
+          const aid = '2608'; // 掘金Web端固定ID
+          
+          // 生成伪随机UUID增加请求真实性
+          const generateUUID = () => '7143943034230' + Math.floor(Math.random() * 1000000);
+          
+          let finalReport = ["📦 掘金助手运行报告 (" + new Date().toLocaleString('zh-CN', {timeZone: 'Asia/Shanghai'}) + ")"];
 
-          async function startJuejin(cookie, index) {
+          /**
+           * 核心逻辑：单个账号执行流程
+           */
+          async function executeTask(cookie, index) {
+            const uuid = generateUUID();
+            const PARAMS = `?aid=${aid}&uuid=${uuid}`;
+            
             const api = axios.create({
               baseURL: 'https://api.juejin.cn',
               headers: {
@@ -43,69 +52,17 @@ jobs:
                 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
                 'Origin': 'https://juejin.cn',
                 'Referer': 'https://juejin.cn/',
-                'Content-Type': 'application/json'
+                'Content-Type': 'application/json; charset=utf-8'
               }
             });
 
             let logs = [`【账号 ${index + 1}】`];
 
             try {
-              // 1. 签到任务 (必须带上空 Body {})
+              // 1. 每日签到 (需传空对象 {} 避免部分环境411错误)
               const checkIn = await api.post(`/growth_api/v1/check_in${PARAMS}`, {});
-              if (checkIn.data.err_no === 0) {
+              if (checkIn.data && checkIn.data.err_no === 0) {
                 logs.push(`✅ 签到成功: +${checkIn.data.data.incr_point} 矿石`);
-              } else if (checkIn.data.err_no === 20001) {
-                logs.push(`ℹ️ 今日已签到`);
               } else {
-                logs.push(`❌ 签到失败: ${checkIn.data.err_msg}`);
-              }
-
-              // 2. 免费抽奖任务
-              const config = await api.get(`/growth_api/v1/lottery_config/get${PARAMS}`);
-              if (config.data.err_no === 0 && config.data.data.free_count > 0) {
-                const draw = await api.post(`/growth_api/v1/lottery/draw${PARAMS}`, {});
-                logs.push(draw.data.err_no === 0 ? `🎁 抽奖结果: ${draw.data.data.lottery_name}` : `🎁 抽奖失败`);
-              } else {
-                logs.push(`🎫 抽奖提示: 无免费机会`);
-              }
-
-              // 3. 沾喜气任务 (自动获取最新的 history_id)
-              const history = await api.post(`/growth_api/v1/lottery_history/global_big${PARAMS}`, {});
-              const hid = history.data?.data?.lotteries?.[0]?.history_id;
-              if (hid) {
-                const dip = await api.post(`/growth_api/v1/lottery_lucky/dip_lucky${PARAMS}`, { lottery_history_id: hid });
-                logs.push(dip.data.err_no === 0 ? `✨ 沾喜气成功` : `✨ 沾喜气: ${dip.data.err_msg}`);
-              }
-
-            } catch (err) {
-              logs.push(`⚠️ 请求异常: ${err.message}`);
-            }
-            return logs.join('\n');
-          }
-
-          async function main() {
-            if (cookies.length === 0) {
-              console.log("❌ 错误: 未找到 JUEJIN_COOKIES");
-              return;
-            }
-
-            for (let i = 0; i < cookies.length; i++) {
-              console.log(`正在执行账号 ${i+1}...`);
-              const res = await startJuejin(cookies[i], i);
-              reportLines.push(res);
-            }
-
-            const finalMsg = reportLines.join('\n\n');
-            console.log(finalMsg);
-
-            // 推送通知
-            if (pushKey) {
-              await axios.get(`https://api.day.app/${pushKey}/${encodeURIComponent('掘金报告')}/${encodeURIComponent(finalMsg)}?isArchive=1`)
-                .catch(e => console.log("推送通知失败"));
-            }
-          }
-
-          main();
-          EOF
-
-          node index.js
+                const msg = checkIn.data?.err_msg || (checkIn.status === 403 ? "触发风控/验证码" : "接口响应异常");
+                logs.push(checkIn.data?.err_no === 20001 ? "ℹ️ 今日已签到
