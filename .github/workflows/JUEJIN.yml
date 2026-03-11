@@ -2,7 +2,7 @@ name: Juejin Checkin
 on:
   workflow_dispatch:
   schedule:
-    - cron: '0 4 * * *'  # 每天北京时间 12:00 (UTC+8)
+    - cron: '0 4 * * *'
 
 jobs:
   checkin:
@@ -12,192 +12,166 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Setup Python
-        uses: actions/setup-python@v5
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
         with:
-          python-version: '3.11'
+          node-version: '18'
 
       - name: Install dependencies
         run: |
-          pip install requests
+          npm install axios tough-cookie
 
       - name: Create checkin script
         run: |
-          cat > juejin_checkin.py << 'EOF'
-          import os
-          import requests
-          import json
+          cat > juejin_checkin.js << 'EOF'
+          const axios = require('axios');
+          const { CookieJar } = require('tough-cookie');
+          const { wrapper } = require('axios-cookiejar-support');
 
-          class JuejinCheckin:
-              def __init__(self, cookie):
-                  self.cookie = cookie
-                  self.headers = {
-                      'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-                      'Cookie': cookie,
-                      'Content-Type': 'application/json'
-                  }
-                  self.base_url = 'https://api.juejin.cn'
+          class JuejinHelper {
+            constructor(cookie) {
+              this.cookie = cookie;
+              this.client = wrapper(axios.create({
+                baseURL: 'https://api.juejin.cn',
+                headers: {
+                  'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+                  'Cookie': cookie,
+                  'Content-Type': 'application/json',
+                  'Origin': 'https://juejin.cn',
+                  'Referer': 'https://juejin.cn/'
+                },
+                timeout: 10000
+              }));
+            }
 
-              def get_user_info(self):
-                  """获取用户信息"""
-                  try:
-                      url = f'{self.base_url}/user_api/v1/user/get'
-                      r = requests.get(url, headers=self.headers, timeout=10)
-                      data = r.json()
-                      
-                      if data.get('err_no') == 0:
-                          user_name = data['data']['user_name']
-                          print(f'用户: {user_name}')
-                          return True
-                      else:
-                          print(f'获取用户信息失败: {data.get("err_msg")}')
-                          return False
-                  except Exception as e:
-                      print(f'获取用户信息异常: {e}')
-                      return False
+            async getCurrentUser() {
+              try {
+                const res = await this.client.get('/user_api/v1/user/get');
+                if (res.data.err_no === 0) {
+                  console.log(`用户: ${res.data.data.user_name}`);
+                  return res.data.data;
+                }
+                return null;
+              } catch (e) {
+                console.error('获取用户信息失败:', e.message);
+                return null;
+              }
+            }
 
-              def check_in(self):
-                  """签到"""
-                  try:
-                      url = f'{self.base_url}/growth_api/v1/check_in'
-                      r = requests.post(url, headers=self.headers, timeout=10)
-                      data = r.json()
-                      
-                      if data.get('err_no') == 0:
-                          print('签到成功')
-                          return True
-                      elif data.get('err_msg') == '已签到':
-                          print('今日已签到')
-                          return True
-                      else:
-                          print(f'签到失败: {data.get("err_msg")}')
-                          return False
-                  except Exception as e:
-                      print(f'签到异常: {e}')
-                      return False
+            async checkIn() {
+              try {
+                const res = await this.client.post('/growth_api/v1/check_in');
+                if (res.data.err_no === 0) {
+                  console.log('签到成功');
+                  return true;
+                } else if (res.data.err_msg && res.data.err_msg.includes('已签到')) {
+                  console.log('今日已签到');
+                  return true;
+                } else {
+                  console.log(`签到失败: ${res.data.err_msg || '未知错误'}`);
+                  return false;
+                }
+              } catch (e) {
+                console.error('签到异常:', e.message);
+                return false;
+              }
+            }
 
-              def draw_lottery(self):
-                  """抽奖"""
-                  try:
-                      url = f'{self.base_url}/growth_api/v1/lottery/draw'
-                      r = requests.post(url, headers=self.headers, timeout=10)
-                      data = r.json()
-                      
-                      if data.get('err_no') == 0:
-                          lottery_name = data['data'].get('lottery_name', '未知奖品')
-                          print(f'抽奖成功: {lottery_name}')
-                          return True
-                      else:
-                          print(f'抽奖: {data.get("err_msg")}')
-                          return False
-                  except Exception as e:
-                      print(f'抽奖异常: {e}')
-                      return False
+            async getLotteryConfig() {
+              try {
+                const res = await this.client.get('/growth_api/v1/lottery_config/get');
+                if (res.data.err_no === 0) {
+                  const freeCount = res.data.data.free_count || 0;
+                  console.log(`免费抽奖次数: ${freeCount}`);
+                  return freeCount;
+                }
+                return 0;
+              } catch (e) {
+                console.error('获取抽奖配置失败:', e.message);
+                return 0;
+              }
+            }
 
-              def get_lottery_config(self):
-                  """获取抽奖配置（查看免费抽奖次数）"""
-                  try:
-                      url = f'{self.base_url}/growth_api/v1/lottery_config/get'
-                      r = requests.get(url, headers=self.headers, timeout=10)
-                      data = r.json()
-                      
-                      if data.get('err_no') == 0:
-                          free_count = data['data'].get('free_count', 0)
-                          print(f'剩余免费抽奖次数: {free_count}')
-                          return free_count
-                      return 0
-                  except Exception as e:
-                      print(f'获取抽奖配置异常: {e}')
-                      return 0
+            async draw() {
+              try {
+                const res = await this.client.post('/growth_api/v1/lottery/draw');
+                if (res.data.err_no === 0) {
+                  const lotteryName = res.data.data.lottery_name || '未知奖品';
+                  console.log(`抽奖成功: ${lotteryName}`);
+                  return true;
+                } else {
+                  console.log(`抽奖: ${res.data.err_msg || '未知错误'}`);
+                  return false;
+                }
+              } catch (e) {
+                console.error('抽奖异常:', e.message);
+                return false;
+              }
+            }
 
-              def get_current_point(self):
-                  """获取当前矿石数"""
-                  try:
-                      url = f'{self.base_url}/growth_api/v1/get_cur_point'
-                      r = requests.get(url, headers=self.headers, timeout=10)
-                      data = r.json()
-                      
-                      if data.get('err_no') == 0:
-                          point = data['data']
-                          print(f'当前矿石数: {point}')
-                          return point
-                      return 0
-                  except Exception as e:
-                      print(f'获取矿石数异常: {e}')
-                      return 0
+            async getCurPoint() {
+              try {
+                const res = await this.client.get('/growth_api/v1/get_cur_point');
+                if (res.data.err_no === 0) {
+                  console.log(`当前矿石: ${res.data.data}`);
+                  return res.data.data;
+                }
+                return 0;
+              } catch (e) {
+                console.error('获取矿石失败:', e.message);
+                return 0;
+              }
+            }
 
-              def dip_lucky(self, lottery_id='7378696901093163067'):
-                  """沾喜气（从其他用户那里获取幸运值）"""
-                  try:
-                      url = f'{self.base_url}/growth_api/v1/lottery_lucky/dip_lucky'
-                      payload = {'lottery_history_id': lottery_id}
-                      r = requests.post(url, headers=self.headers, json=payload, timeout=10)
-                      data = r.json()
-                      
-                      if data.get('err_no') == 0:
-                          dip_value = data['data'].get('dip_value', 0)
-                          print(f'沾喜气成功: +{dip_value} 幸运值')
-                          return True
-                      else:
-                          print(f'沾喜气: {data.get("err_msg")}')
-                          return False
-                  except Exception as e:
-                      print(f'沾喜气异常: {e}')
-                      return False
+            async run() {
+              console.log('='.repeat(50));
+              console.log('开始 掘金 签到任务');
+              console.log('='.repeat(50));
 
-              def run(self):
-                  """执行所有任务"""
-                  print('=' * 50)
-                  print('开始 掘金 签到任务')
-                  print('=' * 50)
-                  
-                  # 验证登录
-                  if not self.get_user_info():
-                      print('Cookie 无效，请更新')
-                      return False
-                  
-                  # 签到
-                  print('\n--- 每日签到 ---')
-                  self.check_in()
-                  
-                  # 查看矿石数
-                  print('\n--- 矿石统计 ---')
-                  self.get_current_point()
-                  
-                  # 抽奖
-                  print('\n--- 免费抽奖 ---')
-                  free_count = self.get_lottery_config()
-                  
-                  if free_count > 0:
-                      for i in range(free_count):
-                          print(f'\n第 {i+1} 次抽奖:')
-                          self.draw_lottery()
-                  
-                  # 沾喜气
-                  print('\n--- 沾喜气 ---')
-                  self.dip_lucky()
-                  
-                  print('\n' + '=' * 50)
-                  print('签到任务完成')
-                  print('=' * 50)
-                  return True
+              const user = await this.getCurrentUser();
+              if (!user) {
+                console.log('Cookie 无效，请更新');
+                return false;
+              }
 
-          if __name__ == '__main__':
-              cookie = os.environ.get('JUEJIN_COOKIE')
-              
-              if not cookie:
-                  print('未设置 JUEJIN_COOKIE')
-                  exit(1)
-              
-              juejin = JuejinCheckin(cookie)
-              success = juejin.run()
-              
-              if not success:
-                  exit(1)
+              console.log('\n--- 每日签到 ---');
+              await this.checkIn();
+
+              console.log('\n--- 矿石统计 ---');
+              await this.getCurPoint();
+
+              console.log('\n--- 免费抽奖 ---');
+              const freeCount = await this.getLotteryConfig();
+              if (freeCount > 0) {
+                for (let i = 0; i < freeCount; i++) {
+                  console.log(`\n第 ${i + 1} 次抽奖:`);
+                  await this.draw();
+                  await new Promise(resolve => setTimeout(resolve, 1000));
+                }
+              }
+
+              console.log('\n' + '='.repeat(50));
+              console.log('签到任务完成');
+              console.log('='.repeat(50));
+              return true;
+            }
+          }
+
+          const cookie = process.env.JUEJIN_COOKIE;
+          if (!cookie) {
+            console.log('未设置 JUEJIN_COOKIE');
+            process.exit(1);
+          }
+
+          const helper = new JuejinHelper(cookie);
+          helper.run().catch(err => {
+            console.error('执行失败:', err);
+            process.exit(1);
+          });
           EOF
 
       - name: Run checkin
         env:
           JUEJIN_COOKIE: ${{ secrets.JUEJIN_COOKIE }}
         run: |
-          python juejin_checkin.py
+          node juejin_checkin.js
