@@ -1,151 +1,111 @@
-name: Cloud189
+name: Juejin Auto Helper
+
 on:
-  workflow_dispatch:
   schedule:
-    - cron: '0 2 * * *'
+    # 每天北京/槟城时间 08:30 自动执行 (UTC 00:30)
+    - cron: '30 0 * * *'
+  workflow_dispatch: # 支持手动点击按钮执行
 
 jobs:
-  checkin:
+  juejin_task:
     runs-on: ubuntu-latest
-    environment: user
     steps:
-      - name: Setup Python
-        uses: actions/setup-python@v5
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
         with:
-          python-version: '3.11'
+          node-version: '20'
 
-      - name: Install dependencies
+      - name: Run Juejin Script
+        env:
+          # 在 GitHub Settings -> Secrets -> Actions 中配置
+          JUEJIN_COOKIES: ${{ secrets.JUEJIN_COOKIES }}
+          PUSH_KEY: ${{ secrets.PUSH_KEY }}
         run: |
-          pip install requests beautifulsoup4
+          npm install axios
+          
+          cat << 'EOF' > index.js
+          const axios = require('axios');
 
-      - name: Create checkin script
-        run: |
-          cat > cloud189_checkin.py << 'EOF'
-          import os
-          import re
-          import requests
-          from bs4 import BeautifulSoup
-          import time
+          // --- 核心常量 ---
+          const PARAMS = '?aid=2608&uuid='; // 掘金Web端核心标识，防止404
+          const cookies = process.env.JUEJIN_COOKIES ? process.env.JUEJIN_COOKIES.split('#') : [];
+          const pushKey = process.env.PUSH_KEY;
+          let reportLines = ["📅 掘金自动化任务报告 (" + new Date().toLocaleString() + ")"];
 
-          username = os.environ.get('CLOUD189_USER')
-          password = os.environ.get('CLOUD189_PWD')
+          async function startJuejin(cookie, index) {
+            const api = axios.create({
+              baseURL: 'https://api.juejin.cn',
+              headers: {
+                'Cookie': cookie,
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
+                'Origin': 'https://juejin.cn',
+                'Referer': 'https://juejin.cn/',
+                'Content-Type': 'application/json'
+              }
+            });
 
-          class Cloud189:
-              def __init__(self):
-                  self.session = requests.Session()
-                  self.session.headers.update({
-                      'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-                      'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
-                      'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.8',
-                  })
+            let logs = [`【账号 ${index + 1}】`];
 
-              def login(self, username, password):
-                  try:
-                      print('开始登录流程...')
-                      
-                      # 访问登录页面
-                      login_page = self.session.get('https://cloud.189.cn/web/login.html', timeout=15)
-                      print(f'登录页面状态: {login_page.status_code}')
-                      
-                      if login_page.status_code != 200:
-                          print('无法访问登录页面')
-                          return False
-                      
-                      # 尝试使用简化的登录方式
-                      # 有些情况下可以直接 POST 到登录接口
-                      login_url = 'https://cloud.189.cn/api/portal/loginUrl.action'
-                      params = {
-                          'redirectURL': 'https://cloud.189.cn/main.action'
-                      }
-                      
-                      r = self.session.get(login_url, params=params, timeout=15)
-                      print(f'获取登录URL: {r.status_code}')
-                      
-                      if r.status_code == 200:
-                          try:
-                              data = r.json()
-                              print(f'登录URL响应: {data}')
-                          except:
-                              print('无法解析登录URL响应')
-                      
-                      # 尝试直接访问主页看是否需要登录
-                      main_page = self.session.get('https://cloud.189.cn/main.action', timeout=15)
-                      print(f'主页状态: {main_page.status_code}')
-                      
-                      # 检查是否已经登录或可以访问签到接口
-                      return True
-                      
-                  except Exception as e:
-                      print(f'登录异常: {e}')
-                      import traceback
-                      traceback.print_exc()
-                      return False
+            try {
+              // 1. 签到任务 (必须带上空 Body {})
+              const checkIn = await api.post(`/growth_api/v1/check_in${PARAMS}`, {});
+              if (checkIn.data.err_no === 0) {
+                logs.push(`✅ 签到成功: +${checkIn.data.data.incr_point} 矿石`);
+              } else if (checkIn.data.err_no === 20001) {
+                logs.push(`ℹ️ 今日已签到`);
+              } else {
+                logs.push(`❌ 签到失败: ${checkIn.data.err_msg}`);
+              }
 
-              def checkin(self):
-                  try:
-                      print('尝试签到...')
-                      
-                      # 尝试多个可能的签到接口
-                      urls = [
-                          'https://api.cloud.189.cn/mkt/userSign.action',
-                          'https://cloud.189.cn/api/portal/sign.action',
-                          'https://cloud.189.cn/v2/drawPrizeMarketDetails.action?taskId=TASK_SIGNIN&activityId=ACT_SIGNIN'
-                      ]
-                      
-                      for url in urls:
-                          try:
-                              print(f'尝试签到接口: {url}')
-                              r = self.session.get(url, timeout=15)
-                              print(f'签到响应状态: {r.status_code}')
-                              print(f'响应内容: {r.text[:200]}')
-                              
-                              if r.status_code == 200:
-                                  try:
-                                      data = r.json()
-                                      print(f'签到结果: {data}')
-                                      
-                                      if data.get('isSign') or '已签' in str(data):
-                                          print('今日已签到')
-                                          return True
-                                      elif data.get('netdiskBonus'):
-                                          print(f'签到成功，获得 {data.get("netdiskBonus")}M 空间')
-                                          return True
-                                  except:
-                                      if '签到' in r.text or 'sign' in r.text.lower():
-                                          print('可能签到成功')
-                                          return True
-                          except Exception as e:
-                              print(f'接口 {url} 失败: {e}')
-                              continue
-                      
-                      print('所有签到接口都失败了')
-                      return False
-                      
-                  except Exception as e:
-                      print(f'签到异常: {e}')
-                      return False
+              // 2. 免费抽奖任务
+              const config = await api.get(`/growth_api/v1/lottery_config/get${PARAMS}`);
+              if (config.data.err_no === 0 && config.data.data.free_count > 0) {
+                const draw = await api.post(`/growth_api/v1/lottery/draw${PARAMS}`, {});
+                logs.push(draw.data.err_no === 0 ? `🎁 抽奖结果: ${draw.data.data.lottery_name}` : `🎁 抽奖失败`);
+              } else {
+                logs.push(`🎫 抽奖提示: 无免费机会`);
+              }
 
-          if __name__ == '__main__':
-              if not username or not password:
-                  print('未设置账号密码')
-                  exit(1)
-              
-              cloud = Cloud189()
-              
-              # 先尝试登录
-              if cloud.login(username, password):
-                  print('登录流程完成，尝试签到')
-                  cloud.checkin()
-              else:
-                  print('登录失败')
-                  # 即使登录失败，也尝试签到（可能不需要登录）
-                  print('尝试无登录签到...')
-                  cloud.checkin()
+              // 3. 沾喜气任务 (自动获取最新的 history_id)
+              const history = await api.post(`/growth_api/v1/lottery_history/global_big${PARAMS}`, {});
+              const hid = history.data?.data?.lotteries?.[0]?.history_id;
+              if (hid) {
+                const dip = await api.post(`/growth_api/v1/lottery_lucky/dip_lucky${PARAMS}`, { lottery_history_id: hid });
+                logs.push(dip.data.err_no === 0 ? `✨ 沾喜气成功` : `✨ 沾喜气: ${dip.data.err_msg}`);
+              }
+
+            } catch (err) {
+              logs.push(`⚠️ 请求异常: ${err.message}`);
+            }
+            return logs.join('\n');
+          }
+
+          async function main() {
+            if (cookies.length === 0) {
+              console.log("❌ 错误: 未找到 JUEJIN_COOKIES");
+              return;
+            }
+
+            for (let i = 0; i < cookies.length; i++) {
+              console.log(`正在执行账号 ${i+1}...`);
+              const res = await startJuejin(cookies[i], i);
+              reportLines.push(res);
+            }
+
+            const finalMsg = reportLines.join('\n\n');
+            console.log(finalMsg);
+
+            // 推送通知
+            if (pushKey) {
+              await axios.get(`https://api.day.app/${pushKey}/${encodeURIComponent('掘金报告')}/${encodeURIComponent(finalMsg)}?isArchive=1`)
+                .catch(e => console.log("推送通知失败"));
+            }
+          }
+
+          main();
           EOF
 
-      - name: Run checkin
-        env:
-          CLOUD189_USER: ${{ secrets.TY_USERNAME }}
-          CLOUD189_PWD: ${{ secrets.TY_PASSWORD }}
-        run: |
-          python cloud189_checkin.py
+          node index.js
