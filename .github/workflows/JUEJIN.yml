@@ -2,9 +2,8 @@ name: Juejin Auto Helper
 
 on:
   schedule:
-    # 每天北京时间 09:00 运行 (UTC 01:00)
     - cron: '0 1 * * *'
-  workflow_dispatch: # 支持手动点击运行
+  workflow_dispatch:
 
 jobs:
   juejin_task:
@@ -20,89 +19,89 @@ jobs:
 
       - name: Run Script
         env:
-          # 在 GitHub Repo -> Settings -> Secrets 中设置以下变量
           JUEJIN_COOKIES: ${{ secrets.JUEJIN_COOKIES }} 
-          PUSH_KEY: ${{ secrets.PUSH_KEY }} # 可选：Bark 或 Server酱的 Key
+          PUSH_KEY: ${{ secrets.PUSH_KEY }}
         run: |
-          # 1. 自动安装依赖
           npm install axios
           
-          # 2. 写入内联 Node.js 脚本
           cat << 'EOF' > index.js
           const axios = require('axios');
 
-          // --- 配置区 ---
+          // --- 核心配置 ---
+          // 2608 是掘金 Web 端的固定 aid，缺少它会导致 404
+          const PARAMS = '?aid=2608&uuid='; 
           const cookies = process.env.JUEJIN_COOKIES ? process.env.JUEJIN_COOKIES.split('#') : [];
           const pushKey = process.env.PUSH_KEY;
-
-          const http = axios.create({
-            baseURL: 'https://api.juejin.cn',
-            timeout: 10000,
-            headers: {
-              'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-              'Referer': 'https://juejin.cn/',
-            }
-          });
 
           async function runTask(cookie) {
             const instance = axios.create({ 
               baseURL: 'https://api.juejin.cn',
-              headers: { 'Cookie': cookie, 'User-Agent': 'Mozilla/5.0' }
+              headers: { 
+                'Cookie': cookie,
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
+                'Origin': 'https://juejin.cn',
+                'Referer': 'https://juejin.cn/',
+                'Content-Type': 'application/json'
+              }
             });
 
             let report = [];
             try {
               // 1. 签到
-              const checkIn = await instance.post('/growth_api/v1/check_in');
+              const checkIn = await instance.post(`/growth_api/v1/check_in${PARAMS}`);
               if (checkIn.data.err_no === 0) {
                 report.push(`✅ 签到成功: +${checkIn.data.data.incr_point} 矿石`);
               } else {
-                report.push(`ℹ️ 签到提示: ${checkIn.data.err_msg}`);
+                report.push(`ℹ️ 签到提示: ${checkIn.data.err_msg || '可能已签到'}`);
               }
 
-              // 2. 免费抽奖
-              const config = await instance.get('/show_api/v1/lottery_config/get');
-              if (config.data.data.free_count > 0) {
-                const draw = await instance.post('/show_api/v1/lottery/draw');
-                report.push(`🎁 抽奖结果: ${draw.data.data.lottery_name}`);
+              // 2. 获取抽奖配置 (改用 growth_api 路径)
+              const config = await instance.get(`/growth_api/v1/lottery_config/get${PARAMS}`);
+              if (config.data.err_no === 0 && config.data.data.free_count > 0) {
+                // 3. 免费抽奖
+                const draw = await instance.post(`/growth_api/v1/lottery/draw${PARAMS}`);
+                if (draw.data.err_no === 0) {
+                  report.push(`🎁 抽奖结果: ${draw.data.data.lottery_name}`);
+                }
               } else {
                 report.push("🎫 今日无免费抽奖机会");
               }
 
-              // 3. 沾喜气 (每日首次)
-              const luckyRes = await instance.post('/growth_api/v1/lottery_lucky/dip_lucky', { lottery_history_id: '7143943034230636551' });
-              report.push(luckyRes.data.err_no === 0 ? "✨ 沾喜气成功" : "✨ 今日已沾过喜气");
+              // 4. 沾喜气 (ID 会动态变化，这里做了容错)
+              const luckyList = await instance.post(`/growth_api/v1/lottery_history/global_big${PARAMS}`, { page_no: 1, page_size: 1 });
+              const historyId = luckyList.data?.data?.lotteries?.[0]?.history_id;
+              if (historyId) {
+                const dipRes = await instance.post(`/growth_api/v1/lottery_lucky/dip_lucky${PARAMS}`, { lottery_history_id: historyId });
+                report.push(dipRes.data.err_no === 0 ? "✨ 沾喜气成功" : "✨ 今日已沾过");
+              }
 
             } catch (err) {
-              report.push(`❌ 运行异常: ${err.message}`);
+              console.error(err);
+              report.push(`❌ 运行异常: ${err.response?.status || err.message}`);
             }
             return report.join('\n');
           }
 
           async function main() {
-            if (cookies.length === 0) {
-              console.error("未找到 JUEJIN_COOKIES，请在 Secrets 中配置");
-              return;
-            }
+            if (cookies.length === 0) return console.error("未找到 Cookie");
 
-            let finalReport = ["【掘金自动化助手报告】"];
+            let summary = ["【掘金自动化助手报告】"];
             for (let i = 0; i < cookies.length; i++) {
               console.log(`正在处理第 ${i+1} 个账号...`);
               const res = await runTask(cookies[i]);
-              finalReport.push(`--- 账号 ${i+1} ---\n${res}`);
+              summary.push(`--- 账号 ${i+1} ---\n${res}`);
             }
 
-            const message = finalReport.join('\n\n');
-            console.log(message);
+            const msg = summary.join('\n\n');
+            console.log(msg);
 
-            // 推送通知逻辑 (以 Bark 为例)
             if (pushKey) {
-              await axios.get(`https://api.day.app/${pushKey}/${encodeURIComponent('掘金签到报告')}/${encodeURIComponent(message)}`);
+              const url = `https://api.day.app/${pushKey}/${encodeURIComponent('掘金报告')}/${encodeURIComponent(msg)}?isArchive=1`;
+              await axios.get(url).catch(e => console.error("通知发送失败"));
             }
           }
 
           main();
           EOF
 
-          # 3. 执行脚本
           node index.js
