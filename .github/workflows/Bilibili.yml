@@ -26,7 +26,6 @@ jobs:
           cat > bilibili_checkin.py << 'EOF'
           import os
           import requests
-          import json
           import time
 
           class BilibiliCheckin:
@@ -54,23 +53,6 @@ jobs:
                           return False
                   except Exception as e:
                       print(f'获取用户信息异常: {e}')
-                      return False
-
-              def live_checkin(self):
-                  """直播签到"""
-                  try:
-                      url = 'https://api.live.bilibili.com/xlive/web-ucenter/v1/sign/DoSign'
-                      r = requests.get(url, headers=self.headers, timeout=10)
-                      data = r.json()
-                      
-                      if data['code'] == 0:
-                          print(f'直播签到成功')
-                          return True
-                      else:
-                          print(f'直播签到: {data.get("message", "未知错误")}')
-                          return False
-                  except Exception as e:
-                      print(f'直播签到异常: {e}')
                       return False
 
               def coin_add(self, aid, num=1):
@@ -184,9 +166,6 @@ jobs:
                       print('Cookie 无效，请更新')
                       return False
                   
-                  print('\n--- 直播签到 ---')
-                  self.live_checkin()
-                  
                   print('\n--- 获取推荐视频 ---')
                   videos = self.get_recommend_videos()
                   
@@ -194,17 +173,15 @@ jobs:
                       print(f'获取到 {len(videos)} 个推荐视频')
                       
                       print('\n--- 观看视频 ---')
-                      if videos:
-                          self.watch_video(videos[0])
+                      self.watch_video(videos[0])
                       
                       print('\n--- 投币 ---')
-                      for i, aid in enumerate(videos[:2]):
+                      for aid in videos[:2]:
                           if self.coin_add(aid):
                               time.sleep(2)
                       
                       print('\n--- 分享视频 ---')
-                      if videos:
-                          self.share_video(videos[0])
+                      self.share_video(videos[0])
                   
                   print('\n' + '=' * 50)
                   print('签到任务完成')
