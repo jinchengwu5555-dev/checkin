@@ -4,7 +4,7 @@ on:
   schedule:
     # 每天北京/槟城时间 08:30 执行 (UTC 00:30)
     - cron: '30 0 * * *'
-  workflow_dispatch: # 支持手动点击按钮测试
+  workflow_dispatch: # 支持手动测试
 
 jobs:
   juejin_task:
@@ -28,22 +28,16 @@ jobs:
           cat << 'EOF' > index.js
           const axios = require('axios');
 
-          // --- 环境检查与参数初始化 ---
           const cookies = process.env.JUEJIN_COOKIES ? process.env.JUEJIN_COOKIES.split('#') : [];
           const pushKey = process.env.PUSH_KEY;
-          const aid = '2608'; // 掘金Web端固定ID
+          const aid = '2608';
           
-          // 生成伪随机UUID增加请求真实性
           const generateUUID = () => '7143943034230' + Math.floor(Math.random() * 1000000);
-          
           let finalReport = ["📦 掘金助手运行报告 (" + new Date().toLocaleString('zh-CN', {timeZone: 'Asia/Shanghai'}) + ")"];
 
-          /**
-           * 核心逻辑：单个账号执行流程
-           */
           async function executeTask(cookie, index) {
             const uuid = generateUUID();
-            const PARAMS = `?aid=${aid}&uuid=${uuid}`;
+            const PARAMS = "?aid=" + aid + "&uuid=" + uuid;
             
             const api = axios.create({
               baseURL: 'https://api.juejin.cn',
@@ -52,17 +46,62 @@ jobs:
                 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
                 'Origin': 'https://juejin.cn',
                 'Referer': 'https://juejin.cn/',
-                'Content-Type': 'application/json; charset=utf-8'
+                'Content-Type': 'application/json'
               }
             });
 
-            let logs = [`【账号 ${index + 1}】`];
+            let logs = ["【账号 " + (index + 1) + "】"];
 
             try {
-              // 1. 每日签到 (需传空对象 {} 避免部分环境411错误)
-              const checkIn = await api.post(`/growth_api/v1/check_in${PARAMS}`, {});
+              // 1. 签到
+              const checkIn = await api.post("/growth_api/v1/check_in" + PARAMS, {});
               if (checkIn.data && checkIn.data.err_no === 0) {
-                logs.push(`✅ 签到成功: +${checkIn.data.data.incr_point} 矿石`);
+                logs.push("✅ 签到成功: +" + checkIn.data.data.incr_point + " 矿石");
               } else {
-                const msg = checkIn.data?.err_msg || (checkIn.status === 403 ? "触发风控/验证码" : "接口响应异常");
-                logs.push(checkIn.data?.err_no === 20001 ? "ℹ️ 今日已签到
+                const msg = checkIn.data ? checkIn.data.err_msg : "请求被拦截";
+                logs.push(checkIn.data?.err_no === 20001 ? "ℹ️ 今日已签到过" : "❌ 签到失败: " + msg);
+              }
+
+              // 2. 抽奖
+              const config = await api.get("/growth_api/v1/lottery_config/get" + PARAMS);
+              if (config.data?.data?.free_count > 0) {
+                const draw = await api.post("/growth_api/v1/lottery/draw" + PARAMS, {});
+                if (draw.data?.err_no === 0) {
+                  logs.push("🎁 抽奖结果: " + draw.data.data.lottery_name);
+                }
+              } else {
+                logs.push("🎫 抽奖提示: 无免费机会");
+              }
+
+              // 3. 沾喜气
+              const history = await api.post("/growth_api/v1/lottery_history/global_big" + PARAMS, { page_no: 1, page_size: 5 });
+              const luckyId = history.data?.data?.lotteries?.[0]?.history_id || '7143943034230636551';
+              const dip = await api.post("/growth_api/v1/lottery_lucky/dip_lucky" + PARAMS, { lottery_history_id: luckyId });
+              if (dip.data?.err_no === 0) {
+                logs.push("✨ 沾喜气成功: +" + dip.data.data.dip_value + " 点");
+              } else {
+                logs.push("✨ 沾喜气: " + (dip.data?.err_msg || "今日已沾过"));
+              }
+
+            } catch (err) {
+              logs.push("⚠️ 网络异常: " + err.message);
+            }
+            return logs.join('\n');
+          }
+
+          async function main() {
+            if (cookies.length === 0) return console.error("未找到 Cookie");
+            for (let i = 0; i < cookies.length; i++) {
+              const res = await executeTask(cookies[i], i);
+              finalReport.push(res);
+            }
+            const output = finalReport.join('\n\n');
+            console.log(output);
+            if (pushKey) {
+              const barkUrl = "https://api.day.app/" + pushKey + "/" + encodeURIComponent("掘金报告") + "/" + encodeURIComponent(output) + "?isArchive=1";
+              await axios.get(barkUrl).catch(() => {});
+            }
+          }
+          main();
+          EOF
+          node index.js
