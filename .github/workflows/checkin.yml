@@ -19,15 +19,19 @@ jobs:
       - name: Install dailycheckin
         run: pip install dailycheckin
 
-      - name: Write cookie
+      - name: Write config
         env:
           BAIDUWP_COOKIE: ${{ secrets.BAIDUWP_COOKIE }}
+          JD_PT_KEY: ${{ secrets.JD_PT_KEY }}
+          JD_PT_PIN: ${{ secrets.JD_PT_PIN }}
         run: |
           python3 - <<'EOF'
           import os, json
           with open('config.json', 'r') as f:
               config = json.load(f)
           config['BAIDUWP'][0]['cookie'] = os.environ['BAIDUWP_COOKIE']
+          config['JD'][0]['pt_key'] = os.environ['JD_PT_KEY']
+          config['JD'][0]['pt_pin'] = os.environ['JD_PT_PIN']
           with open('config.json', 'w') as f:
               json.dump(config, f)
           EOF
