@@ -1,4 +1,4 @@
-name: Daily Checkin
+name: Baidu wp
 on:
   workflow_dispatch:
   schedule:
