@@ -1,8 +1,8 @@
-name: 52Pojie Ultimate Fix 2026
+name: 52Pojie Mobile Pro 2026
 
 on:
   schedule:
-    # 槟城时间 09:00 (UTC 01:00)
+    # 槟城时间 09:00
     - cron: '0 1 * * *'
   workflow_dispatch:
 
@@ -20,7 +20,6 @@ jobs:
 
       - name: Run Automation
         env:
-          # 请确保 Secret 里的内容不包含任何中文字符！
           POJIE_COOKIES: ${{ secrets.POJIE_COOKIES }}
           PUSH_KEY: ${{ secrets.PUSH_KEY }}
         run: |
@@ -31,60 +30,53 @@ jobs:
 
           const cookies = process.env.POJIE_COOKIES ? process.env.POJIE_COOKIES.split('@') : [];
           const pushKey = process.env.PUSH_KEY;
-          let finalReport = ["🏴‍☠️ 吾爱破解自动化看板"];
+          let finalReport = ["📱 吾爱破解资产看板 (移动版)"];
 
           async function executeTask(cookie, index) {
-            // 极其关键的拟真 Headers
+            // 剔除杂质
+            const cleanCookie = cookie.split('只找到')[0].trim();
+            
             const api = axios.create({
               timeout: 25000,
               headers: {
-                'Cookie': cookie.split('只找到')[0].trim(), // 自动剔除你误贴的说明文字
-                'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
-                'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8',
-                'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.8',
-                'Referer': 'https://www.52pojie.cn/forum.php',
-                'Cache-Control': 'no-cache',
-                'Pragma': 'no-cache',
-                'Upgrade-Insecure-Requests': '1'
+                'Cookie': cleanCookie,
+                'User-Agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_4 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.4 Mobile/15E148 Safari/604.1',
+                'Referer': 'https://www.52pojie.cn/forum.php?mobile=yes',
+                'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8'
               }
             });
 
             let report = [];
             try {
-              // 第一步：先看能不能正常访问首页
-              const home = await api.get('https://www.52pojie.cn/forum.php');
+              // 第一步：访问移动端首页看登录态
+              const home = await api.get('https://www.52pojie.cn/forum.php?mobile=yes');
               const html = home.data;
 
-              // 检测是否被 WAF 防火墙拦截
+              // 检测 WAF
               if (html.includes('安全验证') || html.includes('Cloudflare')) {
-                report.push("❌ 拦截警报: GitHub 美国 IP 被 52 拦截，建议明天再试");
+                report.push("❌ 拦截警报: 移动端依然被 WAF 封锁");
                 return report.join('\n');
               }
 
-              // 提取用户名 (优化版正则)
-              const nameMatch = html.match(/vwmy\"><a[^>]*>(.+?)<\/a>/);
+              // 移动端匹配用户名
+              const nameMatch = html.match(/<a[^>]*>(.+?)<\/a>欢迎您/) || html.match(/欢迎您, (.+?)<\/div>/);
               const userName = nameMatch ? nameMatch[1] : "未知会员";
               report.push("掘友: " + userName);
 
               if (userName === "未知会员") {
-                 // 诊断逻辑：看看页面上有没有“登录”字样
-                 if (html.includes('member.php?mod=logging&action=login')) {
-                   report.push("❌ 状态: Cookie 已完全失效，请重新抓取");
-                 } else {
-                   report.push("❌ 状态: 页面解析异常，52 可能改变了布局");
-                 }
+                 report.push("❌ 状态: Cookie 失效，请重新按 F12 抓取最新的 ht_auth 字段");
                  return report.join('\n');
               }
 
-              // 第二步：执行签到动作
+              // 第二步：执行签到 (移动端专用任务链接)
               const checkIn = await api.get('https://www.52pojie.cn/home.php?mod=task&do=apply&id=2');
               if (checkIn.data.includes('任务已成功完成')) {
-                report.push("✅ 签到成功: 资产已到账");
+                report.push("✅ 签到成功: 奖励已存入包裹");
               } else {
-                report.push("ℹ️ 签到状态: 今日已完成签到");
+                report.push("ℹ️ 签到状态: 今日已完成或任务冷却中");
               }
 
-              // 第三步：抓取资产数据 (对齐图片样式)
+              // 第三步：抓取资产数据 (对齐你的图片样式)
               const creditRes = await api.get('https://www.52pojie.cn/home.php?mod=spacecp&ac=credit&showuser=1');
               const creditHtml = creditRes.data;
               const coin = (creditHtml.match(/吾爱币: <\/em>(.+?)&nbsp;/) || [])[1] || "0";
@@ -93,11 +85,11 @@ jobs:
               report.push("当前吾爱币: " + coin);
               report.push("当前威望值: " + prestige);
               report.push("====================");
-              report.push("Bug: " + prestige); // 完美复刻掘金图片幽默感
+              report.push("Bug: " + prestige); 
               report.push("====================");
 
             } catch (err) {
-              report.push("⚠️ 通讯异常: " + (err.response ? "HTTP " + err.response.status : err.message));
+              report.push("⚠️ 通讯异常: " + (err.response ? "HTTP " + err.response.status : "超时"));
             }
             return report.join('\n');
           }
@@ -105,14 +97,14 @@ jobs:
           async function main() {
             if (cookies.length === 0) return console.log("未配置 Secret");
             for (let i = 0; i < cookies.length; i++) {
-              console.log("执行账号 " + (i + 1));
+              console.log("执行移动端账号 " + (i + 1));
               const res = await executeTask(cookies[i], i);
               finalReport.push("\n" + res);
             }
             const message = finalReport.join('\n');
             console.log(message);
             if (pushKey) {
-              const barkUrl = "https://api.day.app/" + pushKey + "/" + encodeURIComponent("52破解报告") + "/" + encodeURIComponent(message) + "?isArchive=1";
+              const barkUrl = "https://api.day.app/" + pushKey + "/" + encodeURIComponent("52移动报告") + "/" + encodeURIComponent(message) + "?isArchive=1";
               await axios.get(barkUrl).catch(() => {});
             }
           }
