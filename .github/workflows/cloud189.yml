@@ -20,21 +20,18 @@ jobs:
       - name: Write script
         run: |
           cat > cloud189_sign.js << 'JSEOF'
-          const { CloudAuthClient, CloudClient } = require('cloud189-sdk');
+          const { CloudAuthClient, CloudClient, MemoryStore } = require('cloud189-sdk');
 
           const username = process.env.TY_USERNAME;
           const password = process.env.TY_PASSWORD;
 
           async function main() {
             try {
-              const authClient = new CloudAuthClient(username, password);
-              
-              // 获取登录表单和加密信息
-              await authClient.getLoginForm();
-              await authClient.getEncrypt();
+              const store = new MemoryStore();
+              const authClient = new CloudAuthClient(username, password, store);
               
               // 登录
-              await authClient.loginByPassword();
+              const session = await authClient.loginByPassword();
               console.log('登录成功');
 
               const client = new CloudClient(authClient);
@@ -50,6 +47,7 @@ jobs:
               }
             } catch(e) {
               console.error('错误:', e.message);
+              console.error('详细错误:', e);
             }
           }
 
