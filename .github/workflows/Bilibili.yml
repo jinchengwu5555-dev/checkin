@@ -1,4 +1,4 @@
-name: Bilibili Checkin
+name: Bilibili
 on:
   workflow_dispatch:
   schedule:
