@@ -1,119 +1,27 @@
-- name: Write script
-        run: |
-          cat > cloud189_sign.js << 'JSEOF'
-          const axios = require('axios');
-          const crypto = require('crypto');
+name: checkin
 
-          const USERNAME = process.env.TY_USERNAME;
-          const PASSWORD = process.env.TY_PASSWORD;
-          const BASE_URL = 'https://cloud.189.cn';
-          const AUTH_URL = 'https://open.e.189.cn';
+on:
+  schedule:
+    - cron: '0 2 * * *'
+  workflow_dispatch:
 
-          const client = axios.create({
-            timeout: 30000,
-            headers: {
-              'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-              'Referer': 'https://cloud.189.cn/',
-            },
-            withCredentials: true,
-          });
+jobs:
+  checkin:
+    runs-on: ubuntu-latest
 
-          let cookies = {};
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
 
-          function setCookies(response) {
-            const setCookie = response.headers['set-cookie'];
-            if (setCookie) {
-              setCookie.forEach(c => {
-                const [kv] = c.split(';');
-                const [k, v] = kv.split('=');
-                if (k && v) cookies[k.trim()] = v.trim();
-              });
-            }
-          }
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 18
 
-          function getCookieString() {
-            return Object.entries(cookies).map(([k, v]) => `${k}=${v}`).join('; ');
-          }
+      - name: Install axios
+        run: npm install axios
 
-          function rsaEncrypt(pubKey, text) {
-            const buf = Buffer.from(text, 'utf8');
-            return crypto.publicEncrypt(
-              { key: `-----BEGIN PUBLIC KEY-----\n${pubKey}\n-----END PUBLIC KEY-----`,
-                padding: crypto.constants.RSA_PKCS1_PADDING },
-              buf
-            ).toString('hex');
-          }
-
-          async function login() {
-            console.log('正在获取登录参数...');
-            const paramRes = await client.get(`${AUTH_URL}/api/logbox/oauth2/loginSubmit.do`, {
-              params: { appId: '8025431004', version: '2.0' },
-              responseType: 'text' 
-            });
-            setCookies(paramRes);
-
-            const ltMatch = paramRes.data.match(/lt\s*=\s*"([^"]+)"/);
-            const reqIdMatch = paramRes.data.match(/reqId\s*=\s*"([^"]+)"/);
-            const pubKeyMatch = paramRes.data.match(/pubKey\s*=\s*"([^"]+)"/);
-
-            if (!ltMatch || !reqIdMatch || !pubKeyMatch) {
-              console.log('接口返回内容:', paramRes.data);
-              throw new Error('无法解析登录必要的加密参数');
-            }
-
-            const encPwd = rsaEncrypt(pubKeyMatch[1], PASSWORD);
-
-            const loginRes = await client.post(`${AUTH_URL}/api/logbox/oauth2/loginSubmit.do`, 
-              new URLSearchParams({
-                appKey: '8025431004',
-                version: '2.0',
-                accountType: '01',
-                userName: `{RSA}${Buffer.from(USERNAME).toString('hex')}`,
-                password: `{RSA}${encPwd}`,
-                validateCode: '',
-                captchaToken: '',
-                returnUrl: `${BASE_URL}/unifyAccountLogin.do`,
-                mailSuffix: '@189.cn',
-                lt: ltMatch[1],
-                reqId: reqIdMatch[1],
-                paramId: '',
-              }).toString(), {
-              headers: {
-                'Content-Type': 'application/x-www-form-urlencoded',
-                Cookie: getCookieString(),
-              }
-            });
-
-            if (loginRes.data.result !== 0) {
-              throw new Error(`登录失败: ${loginRes.data.msg || JSON.stringify(loginRes.data)}`);
-            }
-
-            const redirectRes = await client.get(loginRes.data.toUrl, {
-              headers: { Cookie: getCookieString() },
-              maxRedirects: 5,
-            });
-            setCookies(redirectRes);
-            console.log('登录成功');
-          }
-
-          async function userSign() {
-            const res = await client.get(`${BASE_URL}/mkt/userSign.action`, {
-              params: { rand: Date.now(), clientType: 'TELEANDROID', version: '8.6.3', model: 'Android' },
-              headers: { Cookie: getCookieString(), 'TS-SIGN': Date.now() }
-            });
-            return res.data;
-          }
-
-          async function main() {
-            try {
-              await login();
-              const signRes = await userSign();
-              console.log(signRes.isSign ? '个人签到：今日已签到' : `个人签到：获得 ${signRes.netdiskBonus || 0}M`);
-            } catch (e) {
-              console.error('流程出错:', e.message);
-              process.exit(1);
-            }
-          }
-
-          main();
-          JSEOF
+      - name: Run sign
+        run: node cloud189_sign.js
+        env:
+          CLOUD189_COOKIE: ${{ secrets.CLOUD189_COOKIE }}
