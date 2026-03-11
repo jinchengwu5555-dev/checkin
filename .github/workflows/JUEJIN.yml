@@ -1,25 +1,27 @@
-name: Juejin Auto Helper
+name: Juejin & Cloud Automation
 
 on:
   schedule:
-    - cron: '0 1 * * *'
-  workflow_dispatch:
+    # 每天北京/槟城时间 08:30 自动执行 (UTC 00:30)
+    - cron: '30 0 * * *'
+  workflow_dispatch: # 支持手动点击按钮执行
 
 jobs:
-  juejin_task:
+  automation_task:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v3
+      - name: Checkout Code
+        uses: actions/checkout@v4
 
       - name: Setup Node.js
-        uses: actions/setup-node@v3
+        uses: actions/setup-node@v4
         with:
-          node-version: '18'
+          node-version: '20'
 
-      - name: Run Script
+      - name: Run Scripts
         env:
-          JUEJIN_COOKIES: ${{ secrets.JUEJIN_COOKIES }} 
+          # 在 GitHub Settings -> Secrets -> Actions 中添加这两个变量
+          JUEJIN_COOKIES: ${{ secrets.JUEJIN_COOKIES }}
           PUSH_KEY: ${{ secrets.PUSH_KEY }}
         run: |
           npm install axios
@@ -27,16 +29,19 @@ jobs:
           cat << 'EOF' > index.js
           const axios = require('axios');
 
-          // --- 核心配置 ---
-          // 2608 是掘金 Web 端的固定 aid，缺少它会导致 404
-          const PARAMS = '?aid=2608&uuid='; 
-          const cookies = process.env.JUEJIN_COOKIES ? process.env.JUEJIN_COOKIES.split('#') : [];
+          // --- 基础配置 ---
+          const PARAMS = '?aid=2608&uuid='; // 掘金Web端必须带上的aid参数
+          const juejinCookies = process.env.JUEJIN_COOKIES ? process.env.JUEJIN_COOKIES.split('#') : [];
           const pushKey = process.env.PUSH_KEY;
+          let finalReports = ["🚀 自动化执行报告 (" + new Date().toLocaleString() + ")"];
 
-          async function runTask(cookie) {
-            const instance = axios.create({ 
+          /**
+           * 掘金助手逻辑
+           */
+          async function juejinTask(cookie, index) {
+            const api = axios.create({
               baseURL: 'https://api.juejin.cn',
-              headers: { 
+              headers: {
                 'Cookie': cookie,
                 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
                 'Origin': 'https://juejin.cn',
@@ -45,63 +50,55 @@ jobs:
               }
             });
 
-            let report = [];
+            let logs = [`【账号 ${index + 1} 掘金结果】`];
+
             try {
-              // 1. 签到
-              const checkIn = await instance.post(`/growth_api/v1/check_in${PARAMS}`);
-              if (checkIn.data.err_no === 0) {
-                report.push(`✅ 签到成功: +${checkIn.data.data.incr_point} 矿石`);
+              // 1. 签到 (必须发送空对象 {} 作为 Body)
+              const checkInRes = await api.post(`/growth_api/v1/check_in${PARAMS}`, {});
+              if (checkInRes.data.err_no === 0) {
+                logs.push(`✅ 签到成功: +${checkInRes.data.data.incr_point} 矿石`);
+              } else if (checkInRes.data.err_no === 20001) {
+                logs.push(`ℹ️ 签到提示: 今日已签到`);
               } else {
-                report.push(`ℹ️ 签到提示: ${checkIn.data.err_msg || '可能已签到'}`);
+                logs.push(`❌ 签到失败: ${checkInRes.data.err_msg}`);
               }
 
-              // 2. 获取抽奖配置 (改用 growth_api 路径)
-              const config = await instance.get(`/growth_api/v1/lottery_config/get${PARAMS}`);
-              if (config.data.err_no === 0 && config.data.data.free_count > 0) {
-                // 3. 免费抽奖
-                const draw = await instance.post(`/growth_api/v1/lottery/draw${PARAMS}`);
-                if (draw.data.err_no === 0) {
-                  report.push(`🎁 抽奖结果: ${draw.data.data.lottery_name}`);
+              // 2. 免费抽奖
+              const configRes = await api.get(`/growth_api/v1/lottery_config/get${PARAMS}`);
+              if (configRes.data.err_no === 0 && configRes.data.data.free_count > 0) {
+                const drawRes = await api.post(`/growth_api/v1/lottery/draw${PARAMS}`, {});
+                if (drawRes.data.err_no === 0) {
+                  logs.push(`🎁 抽奖成功: ${drawRes.data.data.lottery_name}`);
                 }
               } else {
-                report.push("🎫 今日无免费抽奖机会");
+                logs.push(`🎫 抽奖提示: 今日无免费机会`);
               }
 
-              // 4. 沾喜气 (ID 会动态变化，这里做了容错)
-              const luckyList = await instance.post(`/growth_api/v1/lottery_history/global_big${PARAMS}`, { page_no: 1, page_size: 1 });
-              const historyId = luckyList.data?.data?.lotteries?.[0]?.history_id;
+              // 3. 沾喜气 (动态获取历史ID)
+              const historyRes = await api.post(`/growth_api/v1/lottery_history/global_big${PARAMS}`, {});
+              const historyId = historyRes.data?.data?.lotteries?.[0]?.history_id;
               if (historyId) {
-                const dipRes = await instance.post(`/growth_api/v1/lottery_lucky/dip_lucky${PARAMS}`, { lottery_history_id: historyId });
-                report.push(dipRes.data.err_no === 0 ? "✨ 沾喜气成功" : "✨ 今日已沾过");
+                const dipRes = await api.post(`/growth_api/v1/lottery_lucky/dip_lucky${PARAMS}`, { lottery_history_id: historyId });
+                if (dipRes.data.err_no === 0) {
+                  logs.push(`✨ 沾喜气成功: +${dipRes.data.data.dip_value} 点`);
+                } else {
+                  logs.push(`✨ 沾喜气: ${dipRes.data.err_msg}`);
+                }
               }
 
             } catch (err) {
-              console.error(err);
-              report.push(`❌ 运行异常: ${err.response?.status || err.message}`);
+              logs.push(`⚠️ 运行异常: ${err.message}`);
             }
-            return report.join('\n');
+            return logs.join('\n');
           }
 
+          /**
+           * 主程序入口
+           */
           async function main() {
-            if (cookies.length === 0) return console.error("未找到 Cookie");
-
-            let summary = ["【掘金自动化助手报告】"];
-            for (let i = 0; i < cookies.length; i++) {
-              console.log(`正在处理第 ${i+1} 个账号...`);
-              const res = await runTask(cookies[i]);
-              summary.push(`--- 账号 ${i+1} ---\n${res}`);
-            }
-
-            const msg = summary.join('\n\n');
-            console.log(msg);
-
-            if (pushKey) {
-              const url = `https://api.day.app/${pushKey}/${encodeURIComponent('掘金报告')}/${encodeURIComponent(msg)}?isArchive=1`;
-              await axios.get(url).catch(e => console.error("通知发送失败"));
-            }
-          }
-
-          main();
-          EOF
-
-          node index.js
+            // 执行掘金任务
+            if (juejinCookies.length > 0) {
+              for (let i = 0; i < juejinCookies.length; i++) {
+                const result = await juejinTask(juejinCookies[i], i);
+                finalReports.push(result);
+              }
