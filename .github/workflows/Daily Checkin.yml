@@ -430,14 +430,18 @@ jobs:
           EOF
 
       # ─────────────────────────────────────────
-      # 7. ETF 行情
+      # 7. ETF 行情 (单独安装 yfinance)
       # ─────────────────────────────────────────
       - name: ETF Stock Data
         id: stock
         run: |
+          # 单独安装 yfinance，确保使用最新版本
+          pip install yfinance --break-system-packages
+          
           python3 - << 'EOF'
-          import requests, os, yfinance as yf
+          import requests, os
           from datetime import datetime, timezone, timedelta
+          import yfinance as yf
 
           ETFS = [
               ('510500', '中证500ETF',  '510500.SS'),
@@ -470,7 +474,8 @@ jobs:
           def get_history_high(yahoo_symbol):
               try:
                   hist = yf.Ticker(yahoo_symbol).history(period='max')
-                  return hist['High'].max() if not hist.empty else None
+                  if hist.empty: return None
+                  return hist['High'].max()
               except: return None
 
           def dw(s):
