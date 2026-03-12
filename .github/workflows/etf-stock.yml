@@ -1,12 +1,19 @@
-name: Stock
+name: ETF Stock Data
 
 on:
   workflow_dispatch:
+  workflow_call:
+    outputs:
+      result:
+        description: "ETF行情"
+        value: ${{ jobs.fetch.outputs.result }}
 
 jobs:
-  test:
+  fetch:
     runs-on: ubuntu-latest
-
+    outputs:
+      result: ${{ steps.fetch.outputs.result }}
+    
     steps:
       - name: Setup Python
         uses: actions/setup-python@v5
@@ -16,11 +23,13 @@ jobs:
       - name: Install dependencies
         run: pip install requests yfinance --break-system-packages
 
-      - name: Fetch Stock Data
+      - name: ETF Stock Data
+        id: fetch
         run: |
           python3 - << 'EOF'
-          import requests, yfinance as yf
+          import requests, os
           from datetime import datetime, timezone, timedelta
+          import yfinance as yf
 
           ETFS = [
               ('510500', '中证500ETF',  '510500.SS'),
@@ -40,8 +49,7 @@ jobs:
                   r = requests.get(f"https://hq.sinajs.cn/list=sh{code}", headers=headers, timeout=10)
                   r.encoding = 'gbk'
                   data_str = r.text.split('"')[1]
-                  if not data_str:
-                      return None
+                  if not data_str: return None
                   f = data_str.split(',')
                   prev_close = float(f[2])
                   current    = float(f[3])
@@ -49,26 +57,23 @@ jobs:
                       'current':    current,
                       'change_pct': (current - prev_close) / prev_close * 100,
                   }
-              except:
-                  return None
+              except: return None
 
           def get_history_high(yahoo_symbol):
               try:
                   hist = yf.Ticker(yahoo_symbol).history(period='max')
-                  if hist.empty:
-                      return None
+                  if hist.empty: return None
                   return hist['High'].max()
-              except:
-                  return None
+              except: return None
 
           def dw(s):
               return sum(2 if ord(c) > 127 else 1 for c in str(s))
 
           def pad(s, width):
               s = str(s)
-              pad_total = width - dw(s)
-              l = pad_total // 2
-              return ' ' * l + s + ' ' * (pad_total - l)
+              p = width - dw(s)
+              l = p // 2
+              return ' ' * l + s + ' ' * (p - l)
 
           cols = [
               ('ETF名称',    12),
@@ -85,16 +90,14 @@ jobs:
               return '│' + '│'.join(pad(c, w) for c, (_, w) in zip(cells, cols)) + '│'
 
           now = datetime.now(timezone(timedelta(hours=8))).strftime('%Y-%m-%d %H:%M')
-
-          print(f'📊 ETF 行情  {now}')
-          print(sep('┌', '┬', '┐'))
-          print(row([n for n, _ in cols]))
-          print(sep('├', '┼', '┤'))
+          lines = [f'📊 ETF 行情  {now}']
+          lines.append(sep('┌', '┬', '┐'))
+          lines.append(row([n for n, _ in cols]))
+          lines.append(sep('├', '┼', '┤'))
 
           for code, label, yahoo in ETFS:
               d    = get_realtime(code)
               high = get_history_high(yahoo)
-
               if d:
                   arrow = '↑' if d['change_pct'] >= 0 else '↓'
                   sign  = '+' if d['change_pct'] >= 0 else ''
@@ -102,9 +105,14 @@ jobs:
                   pct   = f"{arrow}{sign}{d['change_pct']:.2f}%"
                   h_str = f"{high:.3f}" if high else 'N/A'
                   ratio = f"{d['current']/high*100:.1f}%" if high else 'N/A'
-                  print(row([label, cur, pct, h_str, ratio]))
+                  lines.append(row([label, cur, pct, h_str, ratio]))
               else:
-                  print(row([label, 'N/A', 'N/A', 'N/A', 'N/A']))
+                  lines.append(row([label, 'N/A', 'N/A', 'N/A', 'N/A']))
 
-          print(sep('└', '┴', '┘'))
+          lines.append(sep('└', '┴', '┘'))
+
+          result = '\n'.join(lines)
+          print(result)
+          with open(os.environ['GITHUB_OUTPUT'], 'a') as f:
+              f.write(f"result<<ENDSTOCK\n{result}\nENDSTOCK\n")
           EOF
