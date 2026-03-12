@@ -30,8 +30,6 @@ jobs:
           headers = {
               'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
               'Accept': 'application/json',
-              'x-nba-stats-origin': 'stats',
-              'x-nba-stats-token': 'true',
               'Referer': 'https://www.nba.com/',
           }
 
@@ -43,36 +41,61 @@ jobs:
                   return ''
 
           def get_standings():
-              """获取积分榜排名，失败返回 None"""
-              try:
-                  url = 'https://stats.nba.com/stats/leaguestandingsv3?LeagueID=00&Season=2025-26&SeasonType=Regular+Season'
-                  r = requests.get(url, headers=headers, timeout=10)
-                  data     = r.json()
-                  rows     = data['resultSets'][0]['rowSet']
-                  headers_ = data['resultSets'][0]['headers']
-                  tid_idx  = headers_.index('TeamID')
-                  rnk_idx  = headers_.index('PlayoffRank')
-                  ranking  = {str(row[tid_idx]): int(row[rnk_idx]) for row in rows}
-                  print(f"✅ 积分榜加载成功，共 {len(ranking)} 支球队")
-                  return ranking
-              except Exception as e:
-                  print(f"⚠️ 积分榜获取失败: {e}")
-                  return None  # 明确返回 None 表示失败
+              """
+              尝试多个 cdn.nba.com 积分榜接口，失败返回 None
+              """
+              urls = [
+                  # 方式1: 静态 JSON（同域名，之前赛程接口可用）
+                  'https://cdn.nba.com/static/json/staticData/standings.json',
+                  # 方式2: NBA 每日更新的积分榜快照
+                  'https://cdn.nba.com/static/json/liveData/standings/standings_00.json',
+              ]
+              for url in urls:
+                  try:
+                      r = requests.get(url, headers=headers, timeout=10)
+                      print(f"积分榜接口 {url.split('/')[-1]} 状态码: {r.status_code}")
+                      if r.status_code != 200:
+                          continue
+                      data = r.json()
+                      print(f"原始响应前200字符: {str(data)[:200]}")
+
+                      # 尝试解析方式1: standings.rows
+                      if 'standings' in data and 'rows' in data.get('standings', {}):
+                          rows    = data['standings']['rows']
+                          ranking = {}
+                          for row in rows:
+                              tid  = str(row.get('teamId', ''))
+                              rank = int(row.get('playoffRank', 99))
+                              if tid:
+                                  ranking[tid] = rank
+                          if ranking:
+                              print(f"✅ 积分榜(方式1)加载成功，共 {len(ranking)} 支球队")
+                              return ranking
+
+                      # 尝试解析方式2: standingsGroups
+                      if 'standingsGroups' in data:
+                          ranking = {}
+                          for conf in data['standingsGroups']:
+                              for i, team in enumerate(conf.get('standings', []), 1):
+                                  tid = str(team.get('teamId', ''))
+                                  if tid:
+                                      ranking[tid] = i
+                          if ranking:
+                              print(f"✅ 积分榜(方式2)加载成功，共 {len(ranking)} 支球队")
+                              return ranking
+
+                  except Exception as e:
+                      print(f"⚠️ 积分榜接口失败 {url.split('/')[-1]}: {e}")
+                      continue
+
+              print("⚠️ 所有积分榜接口均失败，本次不标注热门")
+              return None
 
           def calc_hot_games(games, ranking):
-              """
-              热门判断规则:
-              - 两队积分榜排名之和越小越热门
-              - 双方都在前8（季后赛区）额外 +5 分
-              - 最多标注 2 场
-              - 积分榜不可用时不标注任何热门
-              """
               if ranking is None:
-                  return set(), {}  # 积分榜失败，不标注热门
-
-              scored = []
+                  return set(), {}
+              scored    = []
               rank_info = {}
-
               for g in games:
                   away_id = str(g['awayTeam'].get('teamId', ''))
                   home_id = str(g['homeTeam'].get('teamId', ''))
@@ -84,13 +107,12 @@ jobs:
                   game_id = str(g['gameId'])
                   scored.append((score, game_id))
                   rank_info[game_id] = (r_away, r_home)
-
               scored.sort(key=lambda x: x[0], reverse=True)
               hot_ids = {gid for _, gid in scored[:2]}
               return hot_ids, rank_info
 
           # ── 获取今日赛程 ──
-          r = requests.get(
+          r         = requests.get(
               'https://cdn.nba.com/static/json/liveData/scoreboard/todaysScoreboard_00.json',
               headers=headers, timeout=10
           )
@@ -98,9 +120,9 @@ jobs:
           games     = data.get('scoreboard', {}).get('games', [])
           game_date = data.get('scoreboard', {}).get('gameDate', '')
 
-          ranking              = get_standings()
-          hot_ids, rank_info   = calc_hot_games(games, ranking)
-          use_rankings         = ranking is not None
+          ranking            = get_standings()
+          hot_ids, rank_info = calc_hot_games(games, ranking)
+          use_rankings       = ranking is not None
 
           finished, ongoing, upcoming = [], [], []
 
@@ -112,9 +134,8 @@ jobs:
               start_cst  = et_to_cst(g.get('gameTimeUTC', ''))
               game_id    = str(g['gameId'])
               is_hot     = game_id in hot_ids
-
               r_away, r_home = rank_info.get(game_id, (99, 99))
-              rank_tag = f" `#{r_away} vs #{r_home}`" if use_rankings else ''
+              rank_tag   = f" `#{r_away} vs #{r_home}`" if use_rankings else ''
 
               info = {
                   'away':       f"{away['teamCity']} {away['teamName']}",
@@ -126,7 +147,6 @@ jobs:
                   'rank_tag':   rank_tag,
                   'is_hot':     is_hot,
               }
-
               if status == 3:
                   finished.append(info)
               elif status == 2:
@@ -142,7 +162,7 @@ jobs:
               block.append('| 比赛 | 比分 | 节次 |')
               block.append('|:---|:---:|:---:|')
               for g in ongoing:
-                  hot  = '🔥 ' if g['is_hot'] else ''
+                  hot = '🔥 ' if g['is_hot'] else ''
                   block.append(
                       f"| {hot}**{g['away']}** vs **{g['home']}**{g['rank_tag']} "
                       f"| **{g['away_score']} - {g['home_score']}** "
@@ -180,7 +200,6 @@ jobs:
           if not games:
               sections.append('今日暂无比赛')
 
-          # 底部说明
           if use_rankings and hot_ids:
               sections.append('> 🔥 热门: 两队积分榜排名之和最小的前2场，双强对决（双方均前8）额外加权')
           elif not use_rankings:
