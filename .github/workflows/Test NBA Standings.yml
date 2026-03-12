@@ -1,4 +1,4 @@
-name: Test NBA Standings from Scoreboard
+name: Test CN NBA Standings
 
 on:
   workflow_dispatch:
@@ -12,29 +12,39 @@ jobs:
         with:
           python-version: '3.11'
       - name: Install dependencies
-        run: pip install requests --break-system-packages
+        run: pip install requests beautifulsoup4 --break-system-packages
       - name: Test
         run: |
           python3 - << 'EOF'
-          import requests, json
+          import requests
+          from bs4 import BeautifulSoup
 
-          headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'}
+          ua = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+          headers = {'User-Agent': ua, 'Accept-Language': 'zh-CN,zh;q=0.9'}
 
-          # 看看 todaysScoreboard 里每支球队有哪些字段
-          r = requests.get(
-              'https://cdn.nba.com/static/json/liveData/scoreboard/todaysScoreboard_00.json',
-              headers=headers, timeout=10
-          )
-          data  = r.json()
-          games = data['scoreboard']['games']
+          urls = [
+              # 腾讯体育 NBA 积分榜
+              ('腾讯体育', 'https://sports.qq.com/nba/teamrank/'),
+              # 新浪体育 NBA 积分榜
+              ('新浪体育', 'https://sports.sina.com.cn/nba/standing.shtml'),
+              # 163 网易体育
+              ('网易体育', 'https://sports.163.com/nba/standing/'),
+              # 懂球帝
+              ('懂球帝', 'https://www.dongqiudi.com/archive/nba/standing'),
+              # 虎扑 NBA 积分榜（之前试过teams页，换standing）
+              ('虎扑积分榜', 'https://nba.hupu.com/standing'),
+          ]
 
-          if games:
-              g = games[0]
-              print("awayTeam 全部字段:")
-              print(json.dumps(g['awayTeam'], indent=2, ensure_ascii=False))
-              print("\nhomeTeam 全部字段:")
-              print(json.dumps(g['homeTeam'], indent=2, ensure_ascii=False))
-          else:
-              print("今日无比赛，打印 scoreboard 顶层结构:")
-              print(json.dumps(data['scoreboard'], indent=2, ensure_ascii=False)[:1000])
+          for name, url in urls:
+              try:
+                  r = requests.get(url, headers=headers, timeout=10)
+                  print(f"[{r.status_code}] {name}: {url}")
+                  if r.status_code == 200:
+                      # 看看有没有球队名关键词
+                      text = r.text
+                      hits = sum(1 for kw in ['骑士','勇士','湖人','凯尔特','雄鹿','掘金'] if kw in text)
+                      print(f"  包含球队关键词: {hits}/6")
+                      print(f"  页面长度: {len(text)} 字符")
+              except Exception as e:
+                  print(f"[ERR] {name}: {str(e)[:80]}")
           EOF
