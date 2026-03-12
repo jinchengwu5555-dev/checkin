@@ -1,4 +1,4 @@
-name: Test NBA Standings 2
+name: Test TheSportsDB
 
 on:
   workflow_dispatch:
@@ -20,37 +20,21 @@ jobs:
 
           ua = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
 
-          urls = [
-              # Tank01 - 完全免费无需key
-              ('GET', 'https://tank01-fantasy-stats.p.rapidapi.com/getNBAStandings?seasonYear=2025', {
-                  'User-Agent': ua,
-              }),
-              # sportsdata.io 免费tier
-              ('GET', 'https://api.sportsdata.io/v3/nba/scores/json/Standings/2025', {
-                  'User-Agent': ua,
-              }),
-              # thesportsdb 完全免费
-              ('GET', 'https://www.thesportsdb.com/api/v1/json/3/lookuptable.php?l=4387&s=2024-2025', {
-                  'User-Agent': ua,
-              }),
-              # API-NBA via rapidapi (free tier)
-              ('GET', 'https://api-nba-v1.p.rapidapi.com/standings?league=standard&season=2025', {
-                  'User-Agent': ua,
-              }),
-              # mysportsfeeds
-              ('GET', 'https://api.mysportsfeeds.com/v2.1/pull/nba/2025-2026-regular/standings.json', {
-                  'User-Agent': ua,
-              }),
-          ]
+          # thesportsdb 返回了200，看原始内容
+          r = requests.get(
+              'https://www.thesportsdb.com/api/v1/json/3/lookuptable.php?l=4387&s=2024-2025',
+              headers={'User-Agent': ua}, timeout=8
+          )
+          print(f"状态码: {r.status_code}")
+          print(f"Content-Type: {r.headers.get('Content-Type', '')}")
+          print(f"原始内容前500字符:\n{r.text[:500]}")
+          print("---")
 
-          for method, url, hdrs in urls:
-              try:
-                  r = requests.get(url, headers=hdrs, timeout=8)
-                  print(f"[{r.status_code}] {url.split('?')[0].split('/')[-2:]}")
-                  if r.status_code == 200:
-                      data = r.json()
-                      keys = list(data.keys()) if isinstance(data, dict) else f"list[{len(data)}]"
-                      print(f"  keys: {keys}")
-              except Exception as e:
-                  print(f"[ERR] {url.split('/')[-1][:40]} → {str(e)[:80]}")
+          # 同时测试 thesportsdb 免费key=1的接口
+          r2 = requests.get(
+              'https://www.thesportsdb.com/api/v1/json/1/lookuptable.php?l=4387&s=2024-2025',
+              headers={'User-Agent': ua}, timeout=8
+          )
+          print(f"key=1 状态码: {r2.status_code}")
+          print(f"key=1 内容前500字符:\n{r2.text[:500]}")
           EOF
