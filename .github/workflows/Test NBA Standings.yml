@@ -186,8 +186,9 @@ jobs:
               block.append('|:---|:---|:---:|:---:|')
               for g in ongoing:
                   hot = '🔥 ' if g['is_hot'] else ''
-                  home_rank = f" #{g['r_home']}" if use_rankings and g['r_home'] != 99 else ''
-                  away_rank = f" #{g['r_away']}" if use_rankings and g['r_away'] != 99 else ''
+                  # 始终显示排名
+                  home_rank = f" (#{g['r_home']})" if use_rankings and g['r_home'] != 99 else ''
+                  away_rank = f" (#{g['r_away']})" if use_rankings and g['r_away'] != 99 else ''
                   block.append(
                       f"| {hot}**{g['home']}**{home_rank} "
                       f"| **{g['away']}**{away_rank} "
@@ -202,8 +203,9 @@ jobs:
               block.append('|:---|:---|:---:|')
               for g in upcoming:
                   hot = '🔥 ' if g['is_hot'] else ''
-                  home_rank = f" #{g['r_home']}" if use_rankings and g['r_home'] != 99 else ''
-                  away_rank = f" #{g['r_away']}" if use_rankings and g['r_away'] != 99 else ''
+                  # 始终显示排名
+                  home_rank = f" (#{g['r_home']})" if use_rankings and g['r_home'] != 99 else ''
+                  away_rank = f" (#{g['r_away']})" if use_rankings and g['r_away'] != 99 else ''
                   time = g['start_cst'] if g['start_cst'] else '-'
                   block.append(
                       f"| {hot}**{g['home']}**{home_rank} "
@@ -219,8 +221,9 @@ jobs:
               for g in finished:
                   hot = '🔥 ' if g['is_hot'] else ''
                   winner = g['home'] if g['home_score'] > g['away_score'] else g['away']
-                  home_rank = f" #{g['r_home']}" if use_rankings and g['r_home'] != 99 else ''
-                  away_rank = f" #{g['r_away']}" if use_rankings and g['r_away'] != 99 else ''
+                  # 始终显示排名
+                  home_rank = f" (#{g['r_home']})" if use_rankings and g['r_home'] != 99 else ''
+                  away_rank = f" (#{g['r_away']})" if use_rankings and g['r_away'] != 99 else ''
                   home_fmt = f"**{g['home']}**" if g['home'] == winner else g['home']
                   away_fmt = f"**{g['away']}**" if g['away'] == winner else g['away']
                   block.append(
