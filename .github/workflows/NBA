@@ -1,0 +1,72 @@
+name: Test NBA
+
+on:
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: pip install requests --break-system-packages
+
+      - name: Fetch NBA Data
+        run: |
+          python3 - << 'EOF'
+          import requests, json
+          from datetime import datetime, timezone, timedelta
+
+          # 北京时间今天日期
+          cst = timezone(timedelta(hours=8))
+          today = datetime.now(cst).strftime('%Y-%m-%d')
+          print(f"查询日期: {today}\n")
+
+          headers = {
+              'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+              'Accept': 'application/json',
+          }
+
+          # NBA 官方数据接口（无需 key）
+          url = f"https://cdn.nba.com/static/json/liveData/scoreboard/todaysScoreboard_00.json"
+
+          try:
+              r = requests.get(url, headers=headers, timeout=10)
+              print(f"状态码: {r.status_code}")
+              data = r.json()
+              print(f"原始响应（前500字符）:\n{json.dumps(data, ensure_ascii=False)[:500]}\n")
+
+              games = data.get('scoreboard', {}).get('games', [])
+              print(f"今日比赛数: {len(games)}")
+
+              if not games:
+                  print("今日暂无比赛")
+              else:
+                  for g in games:
+                      home = g['homeTeam']
+                      away = g['awayTeam']
+                      status = g.get('gameStatusText', '')
+                      print(f"\n{away['teamCity']} {away['teamName']} {away.get('score','-')} "
+                            f"vs {home.get('score','-')} {home['teamCity']} {home['teamName']}")
+                      print(f"状态: {status}")
+
+          except Exception as e:
+              print(f"❌ 请求失败: {e}")
+
+          # 同时测试备用接口
+          print("\n\n--- 测试备用接口 (balldontlie) ---")
+          try:
+              today_fmt = datetime.now(cst).strftime('%Y-%m-%d')
+              url2 = f"https://api.balldontlie.io/v1/games?dates[]={today_fmt}&per_page=20"
+              r2 = requests.get(url2, headers=headers, timeout=10)
+              print(f"状态码: {r2.status_code}")
+              print(f"原始响应（前500字符）:\n{r2.text[:500]}")
+          except Exception as e:
+              print(f"❌ 备用接口失败: {e}")
+
+          EOF
