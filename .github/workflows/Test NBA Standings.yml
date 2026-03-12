@@ -34,40 +34,8 @@ jobs:
 
           headers = {
               'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-          }
-
-          # ESPN ID 到 NBA 官方 ID 的映射
-          ESPN_TO_NBA_ID = {
-              '1': '1610612737',   # Atlanta Hawks
-              '2': '1610612738',   # Boston Celtics
-              '3': '1610612740',   # New Orleans Pelicans
-              '4': '1610612741',   # Chicago Bulls
-              '5': '1610612739',   # Cleveland Cavaliers
-              '6': '1610612742',   # Dallas Mavericks
-              '7': '1610612743',   # Denver Nuggets
-              '8': '1610612765',   # Detroit Pistons
-              '9': '1610612744',   # Golden State Warriors
-              '10': '1610612745',  # Houston Rockets
-              '11': '1610612754',  # Indiana Pacers
-              '12': '1610612746',  # LA Clippers
-              '13': '1610612747',  # Los Angeles Lakers
-              '14': '1610612748',  # Miami Heat
-              '15': '1610612749',  # Milwaukee Bucks
-              '16': '1610612750',  # Minnesota Timberwolves
-              '17': '1610612751',  # Brooklyn Nets
-              '18': '1610612752',  # New York Knicks
-              '19': '1610612753',  # Orlando Magic
-              '20': '1610612755',  # Philadelphia 76ers
-              '21': '1610612756',  # Phoenix Suns
-              '22': '1610612757',  # Portland Trail Blazers
-              '23': '1610612758',  # Sacramento Kings
-              '24': '1610612759',  # San Antonio Spurs
-              '25': '1610612760',  # Oklahoma City Thunder
-              '26': '1610612762',  # Utah Jazz
-              '27': '1610612764',  # Washington Wizards
-              '28': '1610612761',  # Toronto Raptors
-              '29': '1610612763',  # Memphis Grizzlies
-              '30': '1610612766',  # Charlotte Hornets
+              'Referer': 'https://www.nba.com/',
+              'Origin': 'https://www.nba.com',
           }
 
           def et_to_cst(utc_str):
@@ -77,65 +45,69 @@ jobs:
               except:
                   return ''
 
-          def get_standings_espn():
-              """从 ESPN 获取 NBA 积分榜，返回 {nba_id: rank} 字典"""
+          def get_standings_nba_official():
+              """从 NBA 官方 API 获取积分榜，返回 {team_id: rank} 字典"""
               try:
-                  url = 'https://site.web.api.espn.com/apis/v2/sports/basketball/nba/standings'
-                  params = {'season': 2025, 'seasontype': 2}
-                  r = requests.get(url, params=params, timeout=10)
+                  url = 'https://stats.nba.com/stats/leaguestandingsv3'
+                  params = {
+                      'LeagueID': '00',
+                      'Season': '2024-25',
+                      'SeasonType': 'Regular Season'
+                  }
+                  headers_nba = {
+                      'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+                      'Referer': 'https://www.nba.com/',
+                      'Origin': 'https://www.nba.com',
+                      'Accept': 'application/json',
+                      'x-nba-stats-origin': 'stats',
+                      'x-nba-stats-token': 'true'
+                  }
+                  
+                  r = requests.get(url, params=params, headers=headers_nba, timeout=15)
                   
                   if r.status_code != 200:
+                      print(f"⚠️ NBA 官方 API 返回 {r.status_code}")
                       return None
                   
                   data = r.json()
-                  all_teams = []
+                  standings = data.get('resultSets', [{}])[0]
+                  headers_list = standings.get('headers', [])
+                  rows = standings.get('rowSet', [])
+                  
+                  if not rows:
+                      return None
+                  
+                  # 找到关键列的索引
+                  team_id_idx = headers_list.index('TeamID')
+                  team_name_idx = headers_list.index('TeamName')
+                  wins_idx = headers_list.index('WINS')
+                  losses_idx = headers_list.index('LOSSES')
+                  win_pct_idx = headers_list.index('WinPCT')
                   
                   # 收集所有球队数据
-                  for conf in data.get('children', []):
-                      entries = conf.get('standings', {}).get('entries', [])
-                      
-                      for entry in entries:
-                          team = entry.get('team', {})
-                          stats = entry.get('stats', [])
-                          
-                          espn_id = str(team.get('id', ''))
-                          nba_id = ESPN_TO_NBA_ID.get(espn_id)
-                          
-                          if not nba_id:
-                              continue
-                          
-                          team_data = {
-                              'nba_id': nba_id,
-                              'name': team.get('displayName', ''),
-                          }
-                          
-                          # 提取胜负数据
-                          for stat in stats:
-                              stat_name = stat.get('name', '')
-                              if stat_name == 'wins':
-                                  team_data['wins'] = int(stat.get('value', 0))
-                              elif stat_name == 'losses':
-                                  team_data['losses'] = int(stat.get('value', 0))
-                          
-                          all_teams.append(team_data)
+                  all_teams = []
+                  for row in rows:
+                      all_teams.append({
+                          'team_id': str(row[team_id_idx]),
+                          'name': row[team_name_idx],
+                          'wins': row[wins_idx],
+                          'losses': row[losses_idx],
+                          'win_pct': row[win_pct_idx]
+                      })
                   
                   # 按胜率排序
-                  for team in all_teams:
-                      total = team.get('wins', 0) + team.get('losses', 0)
-                      team['win_pct'] = team.get('wins', 0) / total if total > 0 else 0
-                  
                   all_teams.sort(key=lambda x: x['win_pct'], reverse=True)
                   
-                  # 生成排名字典（使用 NBA 官方 ID）
+                  # 生成排名字典
                   ranking = {}
                   for i, team in enumerate(all_teams, 1):
-                      ranking[team['nba_id']] = i
+                      ranking[team['team_id']] = i
                   
-                  print(f"✅ ESPN 积分榜加载成功，共 {len(ranking)} 支球队")
+                  print(f"✅ NBA 官方积分榜加载成功，共 {len(ranking)} 支球队")
                   return ranking
                   
               except Exception as e:
-                  print(f"⚠️ ESPN 积分榜获取失败: {e}")
+                  print(f"⚠️ NBA 官方 API 获取失败: {e}")
                   return None
 
           def calc_hot_games(games, ranking):
@@ -181,7 +153,7 @@ jobs:
           game_date = data.get('scoreboard', {}).get('gameDate', '')
 
           # 获取积分榜
-          ranking = get_standings_espn()
+          ranking = get_standings_nba_official()
           hot_ids, rank_info = calc_hot_games(games, ranking)
           use_rankings = ranking is not None
 
@@ -189,99 +161,4 @@ jobs:
           finished, ongoing, upcoming = [], [], []
 
           for g in games:
-              away = g['awayTeam']
-              home = g['homeTeam']
-              status = g.get('gameStatus', 1)
-              status_txt = g.get('gameStatusText', '').strip()
-              start_cst = et_to_cst(g.get('gameTimeUTC', ''))
-              game_id = str(g['gameId'])
-              is_hot = game_id in hot_ids
-              r_away, r_home = rank_info.get(game_id, (99, 99))
-
-              info = {
-                  'home': f"{home['teamCity']} {home['teamName']}",
-                  'away': f"{away['teamCity']} {away['teamName']}",
-                  'home_score': home.get('score', 0),
-                  'away_score': away.get('score', 0),
-                  'status_txt': status_txt,
-                  'start_cst': start_cst,
-                  'r_home': r_home,
-                  'r_away': r_away,
-                  'is_hot': is_hot,
-              }
-              
-              if status == 3:
-                  finished.append(info)
-              elif status == 2:
-                  ongoing.append(info)
-              else:
-                  upcoming.append(info)
-
-          # 生成 Markdown 输出
-          sections = [f"**赛事日期:** {game_date}\n"]
-
-          if ongoing:
-              block = ['### 🔴 进行中\n']
-              block.append('| 主场 | 客场 | 比分 | 节次 |')
-              block.append('|:---|:---|:---:|:---:|')
-              for g in ongoing:
-                  hot = '🔥 ' if g['is_hot'] else ''
-                  home_rank = f" (#{g['r_home']})" if use_rankings and g['r_home'] != 99 else ''
-                  away_rank = f" (#{g['r_away']})" if use_rankings and g['r_away'] != 99 else ''
-                  block.append(
-                      f"| {hot}**{g['home']}**{home_rank} "
-                      f"| **{g['away']}**{away_rank} "
-                      f"| {g['home_score']} - {g['away_score']} "
-                      f"| {g['status_txt']} |"
-                  )
-              sections.append('\n'.join(block))
-
-          if upcoming:
-              block = ['### 🕐 今日待开赛\n']
-              block.append('| 主场 | 客场 | 开赛时间(北京) |')
-              block.append('|:---|:---|:---:|')
-              for g in upcoming:
-                  hot = '🔥 ' if g['is_hot'] else ''
-                  home_rank = f" (#{g['r_home']})" if use_rankings and g['r_home'] != 99 else ''
-                  away_rank = f" (#{g['r_away']})" if use_rankings and g['r_away'] != 99 else ''
-                  time = g['start_cst'] if g['start_cst'] else '-'
-                  block.append(
-                      f"| {hot}**{g['home']}**{home_rank} "
-                      f"| **{g['away']}**{away_rank} "
-                      f"| {time} |"
-                  )
-              sections.append('\n'.join(block))
-
-          if finished:
-              block = ['### ✅ 已结束\n']
-              block.append('| 主场 | 客场 | 比分 | 结果 |')
-              block.append('|:---|:---|:---:|:---:|')
-              for g in finished:
-                  hot = '🔥 ' if g['is_hot'] else ''
-                  winner = g['home'] if g['home_score'] > g['away_score'] else g['away']
-                  home_rank = f" (#{g['r_home']})" if use_rankings and g['r_home'] != 99 else ''
-                  away_rank = f" (#{g['r_away']})" if use_rankings and g['r_away'] != 99 else ''
-                  home_fmt = f"**{g['home']}**" if g['home'] == winner else g['home']
-                  away_fmt = f"**{g['away']}**" if g['away'] == winner else g['away']
-                  block.append(
-                      f"| {hot}{home_fmt}{home_rank} "
-                      f"| {away_fmt}{away_rank} "
-                      f"| {g['home_score']} - {g['away_score']} "
-                      f"| 🏆 **{winner}** |"
-                  )
-              sections.append('\n'.join(block))
-
-          if not games:
-              sections.append('今日暂无比赛')
-
-          if use_rankings and hot_ids:
-              team_count = len(ranking) if ranking else 0
-              sections.append(f'> 🔥 热门: 基于 ESPN 总排名计算，前10强对决额外加权（已获取 {team_count}/30 支球队）')
-          elif not use_rankings:
-              sections.append('> ⚠️ 积分榜数据暂不可用，本次不标注热门场次')
-
-          result = '\n\n'.join(sections)
-          print(result)
-          with open(os.environ['GITHUB_OUTPUT'], 'a') as f:
-              f.write(f"result<<ENDNBA\n{result}\nENDNBA\n")
-          EOF
+              away
