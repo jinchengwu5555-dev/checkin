@@ -1,0 +1,36 @@
+name: Baidu Netdisk
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '30 2 * * *'
+
+jobs:
+  checkin:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dailycheckin
+        run: pip install dailycheckin
+
+      - name: Write cookie
+        env:
+          BAIDUWP_COOKIE: ${{ secrets.BAIDUWP_COOKIE }}
+        run: |
+          python3 - <<'EOF'
+          import os, json
+          with open('config.json', 'r') as f:
+              config = json.load(f)
+          config['BAIDUWP'][0]['cookie'] = os.environ['BAIDUWP_COOKIE']
+          with open('config.json', 'w') as f:
+              json.dump(config, f)
+          EOF
+
+      - name: Run checkin
+        run: dailycheckin
