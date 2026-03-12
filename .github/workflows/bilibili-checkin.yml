@@ -1,0 +1,129 @@
+name: Bilibili Checkin
+
+on:
+  workflow_dispatch:
+  workflow_call:
+    outputs:
+      result:
+        description: "Bilibili签到结果"
+        value: ${{ jobs.checkin.outputs.result }}
+
+jobs:
+  checkin:
+    runs-on: ubuntu-latest
+    outputs:
+      result: ${{ steps.checkin.outputs.result }}
+    
+    steps:
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: pip install requests --break-system-packages
+
+      - name: Bilibili Checkin
+        id: checkin
+        env:
+          BILIBILI_COOKIE: ${{ secrets.BILIBILI_COOKIE }}
+        run: |
+          python3 - << 'EOF'
+          import os, requests, time, sys
+
+          cookie = os.environ.get('BILIBILI_COOKIE', '')
+          if not cookie:
+              result = "📺 Bilibili\n❌ 签到失败: 未设置 BILIBILI_COOKIE"
+              print(result)
+              with open(os.environ['GITHUB_OUTPUT'], 'a') as f:
+                  f.write(f"result<<ENDBILIBILI\n{result}\nENDBILIBILI\n")
+              sys.exit(0)
+
+          headers = {
+              'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+              'Cookie': cookie,
+              'Referer': 'https://www.bilibili.com/'
+          }
+
+          def get_csrf():
+              for item in cookie.split(';'):
+                  if 'bili_jct' in item:
+                      return item.split('=')[1].strip()
+              return ''
+
+          lines = ['📺 Bilibili']
+
+          try:
+              r = requests.get('https://api.bilibili.com/x/web-interface/nav', headers=headers, timeout=10)
+              d = r.json()
+              if d['code'] == 0:
+                  lines.append(f"用户: {d['data']['uname']}")
+              else:
+                  lines.append("❌ 签到失败: Cookie 失效")
+                  result = '\n'.join(lines)
+                  print(result)
+                  with open(os.environ['GITHUB_OUTPUT'], 'a') as f:
+                      f.write(f"result<<ENDBILIBILI\n{result}\nENDBILIBILI\n")
+                  sys.exit(0)
+          except Exception as e:
+              lines.append(f"❌ 签到失败: {e}")
+              result = '\n'.join(lines)
+              print(result)
+              with open(os.environ['GITHUB_OUTPUT'], 'a') as f:
+                  f.write(f"result<<ENDBILIBILI\n{result}\nENDBILIBILI\n")
+              sys.exit(0)
+
+          lines.append("✅ 签到成功")
+
+          videos = []
+          try:
+              r = requests.get('https://api.bilibili.com/x/web-interface/index/top/rcmd',
+                               headers=headers, params={'fresh_type': 3, 'ps': 10}, timeout=10)
+              d = r.json()
+              if d['code'] == 0:
+                  videos = [item['id'] for item in d['data']['item'] if 'id' in item][:5]
+          except: pass
+
+          if videos:
+              try:
+                  r = requests.get(f'https://api.bilibili.com/x/web-interface/view?aid={videos[0]}',
+                                   headers=headers, timeout=10)
+                  d = r.json()
+                  if d['code'] == 0:
+                      cid = d['data']['cid']
+                      requests.post('https://api.bilibili.com/x/click-interface/web/heartbeat',
+                                    headers=headers,
+                                    data={'aid': videos[0], 'cid': cid, 'played_time': 60, 'csrf': get_csrf()},
+                                    timeout=10)
+                      lines.append("✅ 观看视频成功")
+              except Exception as e:
+                  lines.append(f"⚠️ 观看视频异常: {e}")
+
+              coin_ok = 0
+              for aid in videos[:2]:
+                  try:
+                      r = requests.post('https://api.bilibili.com/x/web-interface/coin/add',
+                                        headers=headers,
+                                        data={'aid': aid, 'multiply': 1, 'select_like': 1,
+                                              'cross_domain': 'true', 'csrf': get_csrf()},
+                                        timeout=10)
+                      if r.json().get('code') == 0:
+                          coin_ok += 1
+                      time.sleep(2)
+                  except: pass
+              lines.append(f"✅ 投币成功: {coin_ok} 枚")
+
+              try:
+                  r = requests.post('https://api.bilibili.com/x/web-interface/share/add',
+                                    headers=headers,
+                                    data={'aid': videos[0], 'csrf': get_csrf()},
+                                    timeout=10)
+                  if r.json().get('code') == 0:
+                      lines.append("✅ 分享视频成功")
+              except: pass
+
+          result = '\n'.join(lines)
+          print(result)
+          with open(os.environ['GITHUB_OUTPUT'], 'a') as f:
+              f.write(f"result<<ENDBILIBILI\n{result}\nENDBILIBILI\n")
+          EOF
