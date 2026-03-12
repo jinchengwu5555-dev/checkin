@@ -1,4 +1,4 @@
-name: Test Stock
+name: Stock
 
 on:
   workflow_dispatch:
