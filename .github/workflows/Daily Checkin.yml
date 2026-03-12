@@ -280,7 +280,7 @@ jobs:
           EOF
 
       # ─────────────────────────────────────────
-      # 4. 京东
+      # 4. 京东 (修复状态判断)
       # ─────────────────────────────────────────
       - name: JD Checkin
         id: jd
@@ -314,14 +314,17 @@ jobs:
                 }
               );
               const d = res.data?.data;
-              if (d?.status === 1) {
-                lines.push("✅ 签到成功: +" + (d.signInfo?.signScore || 0) + " 京豆");
-              } else if (d?.status === 2) {
+              // 修复: status 是字符串 "1" 表示签到成功
+              if (d?.status === "1" || d?.status === 1) {
+                const beans = d.dailyAward?.beanAward?.beanCount || d.signInfo?.signScore || 0;
+                lines.push("✅ 签到成功: +" + beans + " 京豆");
+                if (d.continuousDays) lines.push("连续签到: " + d.continuousDays + " 天");
+              } else if (d?.status === "2" || d?.status === 2) {
                 lines.push("ℹ️ 今日已签到");
-              } else if (d?.status === 3) {
+              } else if (d?.status === "3" || d?.status === 3) {
                 lines.push("❌ 签到失败: Cookie 已过期");
               } else {
-                lines.push("❌ 签到失败: 未知状态 " + JSON.stringify(d));
+                lines.push("⚠️ 未知状态: " + (d?.status || 'null'));
               }
             } catch(e) {
               lines.push("❌ 签到失败: " + e.message);
