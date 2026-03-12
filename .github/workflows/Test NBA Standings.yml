@@ -1,11 +1,18 @@
-name: Test NBA Standings Sources
+name: NBA Schedule
 
 on:
   workflow_dispatch:
+  workflow_call:
+    outputs:
+      result:
+        description: "NBA赛程"
+        value: ${{ jobs.fetch.outputs.result }}
 
 jobs:
-  test:
+  fetch:
     runs-on: ubuntu-latest
+    outputs:
+      result: ${{ steps.fetch.outputs.result }}
     
     steps:
       - name: Setup Python
@@ -14,233 +21,227 @@ jobs:
           python-version: '3.11'
 
       - name: Install dependencies
-        run: pip install requests beautifulsoup4 --break-system-packages
+        run: pip install requests --break-system-packages
 
-      - name: Test NBA Standings Sources
+      - name: NBA Schedule
+        id: fetch
         run: |
           python3 - << 'EOF'
-          import requests, json, re
-          from bs4 import BeautifulSoup
+          import requests, os
+          from datetime import datetime, timezone, timedelta
 
-          ua = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+          cst = timezone(timedelta(hours=8))
 
-          print("=" * 100)
-          print("测试 NBA 30 支球队积分榜数据源")
-          print("=" * 100)
+          headers = {
+              'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+          }
 
-          # ========================================
-          # 1. ESPN API - 总排名
-          # ========================================
-          print("\n【1】ESPN API - 30 支球队总排名")
-          try:
-              url = 'https://site.web.api.espn.com/apis/v2/sports/basketball/nba/standings'
-              params = {'season': 2025, 'seasontype': 2}
-              r = requests.get(url, params=params, timeout=10)
-              print(f"状态码: {r.status_code}")
-              
-              if r.status_code == 200:
+          def et_to_cst(utc_str):
+              try:
+                  dt = datetime.fromisoformat(utc_str.replace('Z', '+00:00'))
+                  return dt.astimezone(cst).strftime('%H:%M')
+              except:
+                  return ''
+
+          def get_standings_espn():
+              """从 ESPN 获取 NBA 积分榜，返回 {team_id: rank} 字典"""
+              try:
+                  url = 'https://site.web.api.espn.com/apis/v2/sports/basketball/nba/standings'
+                  params = {'season': 2025, 'seasontype': 2}
+                  r = requests.get(url, params=params, timeout=10)
+                  
+                  if r.status_code != 200:
+                      return None
+                  
                   data = r.json()
                   all_teams = []
                   
+                  # 收集所有球队数据
                   for conf in data.get('children', []):
-                      conf_name = conf.get('name', '')
                       entries = conf.get('standings', {}).get('entries', [])
                       
                       for entry in entries:
                           team = entry.get('team', {})
                           stats = entry.get('stats', [])
                           
-                          # 提取统计数据
                           team_data = {
-                              'conference': conf_name,
+                              'id': str(team.get('id', '')),
                               'name': team.get('displayName', ''),
-                              'abbr': team.get('abbreviation', ''),
                           }
                           
+                          # 提取胜负数据
                           for stat in stats:
                               stat_name = stat.get('name', '')
                               if stat_name == 'wins':
-                                  team_data['wins'] = stat.get('value', 0)
+                                  team_data['wins'] = int(stat.get('value', 0))
                               elif stat_name == 'losses':
-                                  team_data['losses'] = stat.get('value', 0)
-                              elif stat_name == 'rank':
-                                  team_data['conf_rank'] = stat.get('value', 0)
+                                  team_data['losses'] = int(stat.get('value', 0))
                           
                           all_teams.append(team_data)
                   
-                  print(f"✅ 成功获取 {len(all_teams)} 支球队")
-                  
-                  # 按胜率排序计算总排名
+                  # 按胜率排序
                   for team in all_teams:
                       total = team.get('wins', 0) + team.get('losses', 0)
                       team['win_pct'] = team.get('wins', 0) / total if total > 0 else 0
                   
                   all_teams.sort(key=lambda x: x['win_pct'], reverse=True)
                   
-                  print("\n总排名前 10:")
-                  for i, team in enumerate(all_teams[:10], 1):
-                      print(f"  {i:2d}. {team['name']:25s} ({team['abbr']:3s}) - {team.get('wins', 0):2d}胜{team.get('losses', 0):2d}负 ({team['win_pct']:.3f})")
+                  # 生成排名字典
+                  ranking = {}
+                  for i, team in enumerate(all_teams, 1):
+                      ranking[team['id']] = i
                   
-                  print("\n总排名后 5:")
-                  for i, team in enumerate(all_teams[-5:], len(all_teams)-4):
-                      print(f"  {i:2d}. {team['name']:25s} ({team['abbr']:3s}) - {team.get('wins', 0):2d}胜{team.get('losses', 0):2d}负 ({team['win_pct']:.3f})")
-              else:
-                  print(f"❌ 请求失败")
-          except Exception as e:
-              print(f"❌ 异常: {e}")
+                  print(f"✅ ESPN 积分榜加载成功，共 {len(ranking)} 支球队")
+                  return ranking
+                  
+              except Exception as e:
+                  print(f"⚠️ ESPN 积分榜获取失败: {e}")
+                  return None
 
-          # ========================================
-          # 2. 虎扑 - 战绩排名
-          # ========================================
-          print("\n【2】虎扑 - 战绩排名")
-          try:
-              # 尝试多个可能的 URL
-              urls = [
-                  'https://nba.hupu.com/stats/teams',
-                  'https://nba.hupu.com/standings',
-                  'https://nba.hupu.com/stats/standings',
-              ]
+          def calc_hot_games(games, ranking):
+              """计算热门比赛"""
+              if ranking is None:
+                  return set(), {}
               
-              for test_url in urls:
-                  print(f"\n尝试: {test_url}")
-                  headers = {
-                      'User-Agent': ua,
-                      'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
-                      'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.8',
-                      'Referer': 'https://www.hupu.com/',
-                  }
-                  r = requests.get(test_url, headers=headers, timeout=15)
-                  print(f"状态码: {r.status_code}")
+              scored = []
+              rank_info = {}
+              
+              for g in games:
+                  away_id = str(g['awayTeam'].get('teamId', ''))
+                  home_id = str(g['homeTeam'].get('teamId', ''))
+                  r_away = ranking.get(away_id, 99)
+                  r_home = ranking.get(home_id, 99)
                   
-                  if r.status_code == 200:
-                      soup = BeautifulSoup(r.text, 'html.parser')
-                      
-                      # 查找包含"胜"、"负"、"胜率"等关键词的表格
-                      tables = soup.find_all('table')
-                      print(f"找到 {len(tables)} 个表格")
-                      
-                      for idx, table in enumerate(tables):
-                          # 检查表头
-                          headers_row = table.find('tr')
-                          if headers_row:
-                              header_text = headers_row.get_text()
-                              if any(kw in header_text for kw in ['胜', '负', '胜率', '排名']):
-                                  print(f"\n表格 {idx + 1} 可能是积分榜:")
-                                  rows = table.find_all('tr')[:6]
-                                  for i, row in enumerate(rows):
-                                      cols = row.find_all(['td', 'th'])
-                                      text = ' | '.join([col.get_text(strip=True) for col in cols[:6]])
-                                      print(f"  {text}")
-                      
-                      # 查找包含球队名称的文本
-                      team_keywords = ['骑士', '凯尔特人', '热火', '魔术', '雄鹿', '湖人', '勇士']
-                      found_teams = []
-                      for kw in team_keywords:
-                          if kw in r.text:
-                              found_teams.append(kw)
-                      
-                      if found_teams:
-                          print(f"\n✅ 页面包含球队: {', '.join(found_teams)}")
-                      else:
-                          print(f"\n⚠️ 未找到球队关键词")
-                      
-                      break
-          except Exception as e:
-              print(f"❌ 异常: {e}")
+                  if r_away == 99 or r_home == 99:
+                      score = 0
+                  else:
+                      # 排名越靠前分数越高
+                      score = (31 - r_away) + (31 - r_home)
+                      # 前10强对决额外加分
+                      if r_away <= 10 and r_home <= 10:
+                          score += 20
+                  
+                  game_id = str(g['gameId'])
+                  scored.append((score, game_id))
+                  rank_info[game_id] = (r_away, r_home)
+              
+              # 选出分数最高的2场比赛
+              scored.sort(key=lambda x: x[0], reverse=True)
+              hot_ids = {gid for score, gid in scored[:2] if score > 0}
+              
+              return hot_ids, rank_info
 
-          # ========================================
-          # 3. 懂球帝 - 详细解析
-          # ========================================
-          print("\n【3】懂球帝 NBA 积分榜")
-          try:
-              url = 'https://www.dongqiudi.com/data/nba/team'
-              headers = {
-                  'User-Agent': ua,
-                  'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+          # 获取今日赛程
+          r = requests.get(
+              'https://cdn.nba.com/static/json/liveData/scoreboard/todaysScoreboard_00.json',
+              headers=headers, timeout=10
+          )
+          data = r.json()
+          games = data.get('scoreboard', {}).get('games', [])
+          game_date = data.get('scoreboard', {}).get('gameDate', '')
+
+          # 获取积分榜
+          ranking = get_standings_espn()
+          hot_ids, rank_info = calc_hot_games(games, ranking)
+          use_rankings = ranking is not None
+
+          # 分类比赛
+          finished, ongoing, upcoming = [], [], []
+
+          for g in games:
+              away = g['awayTeam']
+              home = g['homeTeam']
+              status = g.get('gameStatus', 1)
+              status_txt = g.get('gameStatusText', '').strip()
+              start_cst = et_to_cst(g.get('gameTimeUTC', ''))
+              game_id = str(g['gameId'])
+              is_hot = game_id in hot_ids
+              r_away, r_home = rank_info.get(game_id, (99, 99))
+
+              info = {
+                  'home': f"{home['teamCity']} {home['teamName']}",
+                  'away': f"{away['teamCity']} {away['teamName']}",
+                  'home_score': home.get('score', 0),
+                  'away_score': away.get('score', 0),
+                  'status_txt': status_txt,
+                  'start_cst': start_cst,
+                  'r_home': r_home,
+                  'r_away': r_away,
+                  'is_hot': is_hot,
               }
-              r = requests.get(url, headers=headers, timeout=10)
-              print(f"状态码: {r.status_code}")
               
-              if r.status_code == 200:
-                  soup = BeautifulSoup(r.text, 'html.parser')
-                  
-                  # 查找表格
-                  tables = soup.find_all('table')
-                  print(f"找到 {len(tables)} 个表格")
-                  
-                  if tables:
-                      print("\n第一个表格前 5 行:")
-                      rows = tables[0].find_all('tr')[:5]
-                      for i, row in enumerate(rows, 1):
-                          cols = row.find_all(['td', 'th'])
-                          text = ' | '.join([col.get_text(strip=True) for col in cols[:6]])
-                          print(f"  {i}. {text}")
-                  
-                  # 查找包含排名的元素
-                  rank_elements = soup.find_all(text=re.compile(r'\d+\s*胜'))
-                  if rank_elements:
-                      print(f"\n找到 {len(rank_elements)} 个包含胜负记录的元素")
-                      for elem in rank_elements[:5]:
-                          print(f"  - {elem.strip()[:50]}")
+              if status == 3:
+                  finished.append(info)
+              elif status == 2:
+                  ongoing.append(info)
               else:
-                  print(f"❌ 请求失败")
-          except Exception as e:
-              print(f"❌ 异常: {e}")
+                  upcoming.append(info)
 
-          # ========================================
-          # 4. 尝试虎扑 API
-          # ========================================
-          print("\n【4】虎扑可能的 API 接口")
-          try:
-              api_urls = [
-                  'https://games.mobileapi.hupu.com/1/7.5.60/nba/getTeamStandings',
-                  'https://games.mobileapi.hupu.com/nba/standings',
-                  'https://m.hupu.com/nba/standings.json',
-              ]
-              
-              for api_url in api_urls:
-                  print(f"\n尝试: {api_url}")
-                  headers = {
-                      'User-Agent': ua,
-                      'Referer': 'https://m.hupu.com/',
-                  }
-                  try:
-                      r = requests.get(api_url, headers=headers, timeout=10)
-                      print(f"状态码: {r.status_code}")
-                      
-                      if r.status_code == 200:
-                          try:
-                              data = r.json()
-                              print(f"✅ 成功获取 JSON 数据")
-                              print(f"数据键: {list(data.keys())[:10]}")
-                              
-                              # 尝试找到球队数据
-                              def find_teams(obj, depth=0):
-                                  if depth > 3:
-                                      return []
-                                  if isinstance(obj, dict):
-                                      for key, value in obj.items():
-                                          if 'team' in key.lower() or 'standing' in key.lower():
-                                              return value
-                                          result = find_teams(value, depth + 1)
-                                          if result:
-                                              return result
-                                  elif isinstance(obj, list) and obj:
-                                      return find_teams(obj[0], depth + 1)
-                                  return []
-                              
-                              teams = find_teams(data)
-                              if teams:
-                                  print(f"找到球队数据，数量: {len(teams) if isinstance(teams, list) else '未知'}")
-                          except:
-                              print(f"⚠️ 非 JSON 格式，内容前 200 字符:")
-                              print(f"  {r.text[:200]}")
-                  except Exception as e:
-                      print(f"请求失败: {str(e)[:50]}")
-          except Exception as e:
-              print(f"❌ 异常: {e}")
+          # 生成 Markdown 输出
+          sections = [f"**赛事日期:** {game_date}\n"]
 
-          print("\n" + "=" * 100)
-          print("测试完成")
-          print("=" * 100)
+          if ongoing:
+              block = ['### 🔴 进行中\n']
+              block.append('| 主场 | 客场 | 比分 | 节次 |')
+              block.append('|:---|:---|:---:|:---:|')
+              for g in ongoing:
+                  hot = '🔥 ' if g['is_hot'] else ''
+                  home_rank = f" #{g['r_home']}" if use_rankings and g['r_home'] != 99 else ''
+                  away_rank = f" #{g['r_away']}" if use_rankings and g['r_away'] != 99 else ''
+                  block.append(
+                      f"| {hot}**{g['home']}**{home_rank} "
+                      f"| **{g['away']}**{away_rank} "
+                      f"| {g['home_score']} - {g['away_score']} "
+                      f"| {g['status_txt']} |"
+                  )
+              sections.append('\n'.join(block))
+
+          if upcoming:
+              block = ['### 🕐 今日待开赛\n']
+              block.append('| 主场 | 客场 | 开赛时间(北京) |')
+              block.append('|:---|:---|:---:|')
+              for g in upcoming:
+                  hot = '🔥 ' if g['is_hot'] else ''
+                  home_rank = f" #{g['r_home']}" if use_rankings and g['r_home'] != 99 else ''
+                  away_rank = f" #{g['r_away']}" if use_rankings and g['r_away'] != 99 else ''
+                  time = g['start_cst'] if g['start_cst'] else '-'
+                  block.append(
+                      f"| {hot}**{g['home']}**{home_rank} "
+                      f"| **{g['away']}**{away_rank} "
+                      f"| {time} |"
+                  )
+              sections.append('\n'.join(block))
+
+          if finished:
+              block = ['### ✅ 已结束\n']
+              block.append('| 主场 | 客场 | 比分 | 结果 |')
+              block.append('|:---|:---|:---:|:---:|')
+              for g in finished:
+                  hot = '🔥 ' if g['is_hot'] else ''
+                  winner = g['home'] if g['home_score'] > g['away_score'] else g['away']
+                  home_rank = f" #{g['r_home']}" if use_rankings and g['r_home'] != 99 else ''
+                  away_rank = f" #{g['r_away']}" if use_rankings and g['r_away'] != 99 else ''
+                  home_fmt = f"**{g['home']}**" if g['home'] == winner else g['home']
+                  away_fmt = f"**{g['away']}**" if g['away'] == winner else g['away']
+                  block.append(
+                      f"| {hot}{home_fmt}{home_rank} "
+                      f"| {away_fmt}{away_rank} "
+                      f"| {g['home_score']} - {g['away_score']} "
+                      f"| 🏆 **{winner}** |"
+                  )
+              sections.append('\n'.join(block))
+
+          if not games:
+              sections.append('今日暂无比赛')
+
+          if use_rankings and hot_ids:
+              team_count = len(ranking) if ranking else 0
+              sections.append(f'> 🔥 热门: 基于 ESPN 总排名计算，前10强对决额外加权（已获取 {team_count}/30 支球队）')
+          elif not use_rankings:
+              sections.append('> ⚠️ 积分榜数据暂不可用，本次不标注热门场次')
+
+          result = '\n\n'.join(sections)
+          print(result)
+          with open(os.environ['GITHUB_OUTPUT'], 'a') as f:
+              f.write(f"result<<ENDNBA\n{result}\nENDNBA\n")
           EOF
