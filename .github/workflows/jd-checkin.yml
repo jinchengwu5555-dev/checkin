@@ -1,0 +1,80 @@
+name: JD Checkin
+
+on:
+  workflow_dispatch:
+  workflow_call:
+    outputs:
+      result:
+        description: "京东签到结果"
+        value: ${{ jobs.checkin.outputs.result }}
+
+jobs:
+  checkin:
+    runs-on: ubuntu-latest
+    outputs:
+      result: ${{ steps.checkin.outputs.result }}
+    
+    steps:
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Install dependencies
+        run: npm install axios
+
+      - name: JD Checkin
+        id: checkin
+        env:
+          JD_COOKIE: ${{ secrets.JD_COOKIE }}
+        run: |
+          cat > jd_sign.js << 'EOF'
+          const axios = require('axios');
+          const fs = require('fs');
+
+          const cookie = process.env.JD_COOKIE;
+          if (!cookie) {
+            const result = "🛒 京东\n❌ 签到失败: 未设置 JD_COOKIE";
+            console.log(result);
+            fs.appendFileSync(process.env.GITHUB_OUTPUT, `result<<ENDJD\n${result}\nENDJD\n`);
+            process.exit(0);
+          }
+
+          async function sign() {
+            let lines = ['🛒 京东'];
+            try {
+              const res = await axios.post(
+                'https://api.m.jd.com/client.action',
+                'functionId=signBeanAct&appid=ld&body=%7B%22rnVersion%22%3A%228.1.0%22%2C%22channel%22%3A1%2C%22os%22%3A%22apple%22%2C%22enAli%22%3A%221%22%7D',
+                {
+                  headers: {
+                    'Cookie': cookie,
+                    'User-Agent': 'JDMobileIOS/13.0.2 (iPhone; iOS 16.0; Scale/3.00)',
+                    'Content-Type': 'application/x-www-form-urlencoded',
+                    'Referer': 'https://bean.m.jd.com/',
+                    'Host': 'api.m.jd.com'
+                  }
+                }
+              );
+              const d = res.data?.data;
+              if (d?.status === "1" || d?.status === 1) {
+                const beans = d.dailyAward?.beanAward?.beanCount || d.signInfo?.signScore || 0;
+                lines.push("✅ 签到成功: +" + beans + " 京豆");
+                if (d.continuousDays) lines.push("连续签到: " + d.continuousDays + " 天");
+              } else if (d?.status === "2" || d?.status === 2) {
+                lines.push("ℹ️ 今日已签到");
+              } else if (d?.status === "3" || d?.status === 3) {
+                lines.push("❌ 签到失败: Cookie 已过期");
+              } else {
+                lines.push("⚠️ 未知状态: " + (d?.status || 'null'));
+              }
+            } catch(e) {
+              lines.push("❌ 签到失败: " + e.message);
+            }
+            const result = lines.join('\n');
+            console.log(result);
+            fs.appendFileSync(process.env.GITHUB_OUTPUT, `result<<ENDJD\n${result}\nENDJD\n`);
+          }
+          sign();
+          EOF
+          node jd_sign.js
