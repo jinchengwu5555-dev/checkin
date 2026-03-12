@@ -7,14 +7,14 @@ on:
 
 jobs:
   # 延时任务
-  # delay:
-  #   runs-on: ubuntu-latest
-  #   steps:
-  #     - name: Random Delay (北京时间 08:00~09:00)
-  #       run: |
-  #         delay=$((RANDOM % 3600))
-  #         echo "随机等待 ${delay} 秒（约 $((delay/60)) 分钟）"
-  #         sleep $delay
+  delay:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Random Delay (北京时间 08:00~09:00)
+        run: |
+          delay=$((RANDOM % 1))
+          echo "随机等待 ${delay} 秒（约 $((delay/60)) 分钟）"
+          sleep $delay
 
   # 调用所有子 workflow（依赖延时完成）
   bilibili:
