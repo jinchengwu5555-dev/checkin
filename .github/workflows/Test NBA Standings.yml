@@ -32,3 +32,25 @@ jobs:
               # thesportsdb 完全免费
               ('GET', 'https://www.thesportsdb.com/api/v1/json/3/lookuptable.php?l=4387&s=2024-2025', {
                   'User-Agent': ua,
+              }),
+              # API-NBA via rapidapi (free tier)
+              ('GET', 'https://api-nba-v1.p.rapidapi.com/standings?league=standard&season=2025', {
+                  'User-Agent': ua,
+              }),
+              # mysportsfeeds
+              ('GET', 'https://api.mysportsfeeds.com/v2.1/pull/nba/2025-2026-regular/standings.json', {
+                  'User-Agent': ua,
+              }),
+          ]
+
+          for method, url, hdrs in urls:
+              try:
+                  r = requests.get(url, headers=hdrs, timeout=8)
+                  print(f"[{r.status_code}] {url.split('?')[0].split('/')[-2:]}")
+                  if r.status_code == 200:
+                      data = r.json()
+                      keys = list(data.keys()) if isinstance(data, dict) else f"list[{len(data)}]"
+                      print(f"  keys: {keys}")
+              except Exception as e:
+                  print(f"[ERR] {url.split('/')[-1][:40]} → {str(e)[:80]}")
+          EOF
