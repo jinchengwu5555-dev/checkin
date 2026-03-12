@@ -1,0 +1,79 @@
+name: Epic Free Games
+
+on:
+  workflow_dispatch:
+  workflow_call:
+    outputs:
+      result:
+        description: "Epic免费游戏"
+        value: ${{ jobs.fetch.outputs.result }}
+
+jobs:
+  fetch:
+    runs-on: ubuntu-latest
+    outputs:
+      result: ${{ steps.fetch.outputs.result }}
+    
+    steps:
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: pip install requests --break-system-packages
+
+      - name: Epic Free Games
+        id: fetch
+        run: |
+          python3 - << 'EOF'
+          import requests, os
+          from datetime import datetime, timezone
+
+          lines = ['🎮 Epic 本周免费游戏']
+
+          try:
+              url = 'https://store-site-backend-static.ak.epicgames.com/freeGamesPromotions?locale=zh-CN&country=CN&allowCountries=CN'
+              r = requests.get(url, timeout=15)
+              games = r.json()['data']['Catalog']['searchStore']['elements']
+
+              free_now, free_next = [], []
+              for game in games:
+                  title = game.get('title', '未知游戏')
+                  promos = game.get('promotions')
+                  if not promos: continue
+                  for offer in promos.get('promotionalOffers', []):
+                      for detail in offer.get('promotionalOffers', []):
+                          if detail.get('discountSetting', {}).get('discountPercentage', 99) == 0:
+                              free_now.append({'title': title, 'end': detail.get('endDate', '')})
+                  for offer in promos.get('upcomingPromotionalOffers', []):
+                      for detail in offer.get('promotionalOffers', []):
+                          if detail.get('discountSetting', {}).get('discountPercentage', 99) == 0:
+                              free_next.append({'title': title, 'start': detail.get('startDate', '')})
+
+              if free_now:
+                  lines.append('本周免费:')
+                  for g in free_now:
+                      try:
+                          end_str = datetime.fromisoformat(g['end'].replace('Z', '+00:00')).strftime('%m月%d日')
+                      except: end_str = ''
+                      lines.append(f"  🆓 {g['title']}" + (f"（至 {end_str}）" if end_str else ''))
+              else:
+                  lines.append('本周暂无免费游戏')
+
+              if free_next:
+                  lines.append('下周免费预告:')
+                  for g in free_next:
+                      try:
+                          start_str = datetime.fromisoformat(g['start'].replace('Z', '+00:00')).strftime('%m月%d日')
+                      except: start_str = ''
+                      lines.append(f"  🔜 {g['title']}" + (f"（{start_str} 开始）" if start_str else ''))
+
+          except Exception as e:
+              lines.append(f"⚠️ 获取失败: {e}")
+
+          result = '\n'.join(lines)
+          print(result)
+          with open(os.environ['GITHUB_OUTPUT'], 'a') as f:
+              f.write(f"result<<ENDEPIC\n{result}\nENDEPIC\n")
+          EOF
