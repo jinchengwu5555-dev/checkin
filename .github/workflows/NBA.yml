@@ -71,25 +71,21 @@ jobs:
                       soup = BeautifulSoup(r.text, 'html.parser')
                       ranking = {}
                       
-                      # 查找表格
                       tables = soup.find_all('table')
                       print(f"找到 {len(tables)} 个表格")
                       
                       for table in tables:
                           rows = table.find_all('tr')
-                          for row in rows[1:]:  # 跳过表头
+                          for row in rows[1:]:
                               cols = row.find_all('td')
                               if len(cols) >= 2:
-                                  # 提取排名和队名
                                   rank_text = cols[0].get_text(strip=True)
                                   team_text = cols[1].get_text(strip=True)
                                   
-                                  # 提取排名数字
                                   rank_match = re.search(r'\d+', rank_text)
                                   if rank_match:
                                       rank = int(rank_match.group())
                                       
-                                      # 匹配队名
                                       for team_name, team_id in HUPU_TO_NBA_ID.items():
                                           if team_name in team_text:
                                               ranking[team_id] = rank
@@ -97,39 +93,24 @@ jobs:
                       
                       if len(ranking) >= 28:
                           print(f"✅ 虎扑积分榜加载成功，共 {len(ranking)} 支球队")
-                          sorted_teams = sorted(ranking.items(), key=lambda x: x[1])
-                          print("前10名球队:")
-                          for team_id, rank in sorted_teams[:10]:
-                              # 反查队名
-                              team_name = [name for name, tid in HUPU_TO_NBA_ID.items() if tid == team_id][0]
-                              print(f"  #{rank} {team_name} (teamId={team_id})")
                           return ranking
                       else:
                           print(f"⚠️ 虎扑数据不完整，只获取到 {len(ranking)} 支球队")
                   
               except Exception as e:
                   print(f"⚠️ 虎扑爬取失败: {e}")
-                  import traceback
-                  traceback.print_exc()
               
               return None
 
           def get_standings():
-              """
-              优先虎扑，失败则使用ESPN
-              """
               ranking = get_standings_from_hupu()
               if ranking and len(ranking) >= 28:
                   return ranking
               
-              # 降级到ESPN
               print("降级使用ESPN数据源")
               return get_standings_espn()
 
           def get_standings_espn():
-              """
-              ESPN 降级方案
-              """
               ESPN_TO_NBA_ID = {
                   'ATL': '1610612737', 'BOS': '1610612738', 'BKN': '1610612751',
                   'CHA': '1610612766', 'CHI': '1610612741', 'CLE': '1610612739',
@@ -182,7 +163,6 @@ jobs:
                       score = 0
                   else:
                       score = (99 - r_away) + (99 - r_home)
-                      # 双方都在前10名，额外加权
                       if r_away <= 10 and r_home <= 10:
                           score += 15
                   
@@ -218,20 +198,16 @@ jobs:
               game_id = str(g['gameId'])
               is_hot = game_id in hot_ids
               r_away, r_home = rank_info.get(game_id, (99, 99))
-              
-              if use_rankings and r_away != 99 and r_home != 99:
-                  rank_tag = f" `#{r_away} vs #{r_home}`"
-              else:
-                  rank_tag = ''
 
               info = {
-                  'away': f"{away['teamCity']} {away['teamName']}",
                   'home': f"{home['teamCity']} {home['teamName']}",
-                  'away_score': away.get('score', 0),
+                  'away': f"{away['teamCity']} {away['teamName']}",
                   'home_score': home.get('score', 0),
+                  'away_score': away.get('score', 0),
                   'status_txt': status_txt,
                   'start_cst': start_cst,
-                  'rank_tag': rank_tag,
+                  'r_home': r_home,
+                  'r_away': r_away,
                   'is_hot': is_hot,
               }
               if status == 3:
@@ -246,42 +222,51 @@ jobs:
 
           if ongoing:
               block = ['### 🔴 进行中\n']
-              block.append('| 比赛（客场 @ 主场）| 比分 | 节次 |')
-              block.append('|:---|:---:|:---:|')
+              block.append('| 主场 | 客场 | 比分 | 节次 |')
+              block.append('|:---|:---|:---:|:---:|')
               for g in ongoing:
                   hot = '🔥 ' if g['is_hot'] else ''
+                  home_rank = f" #{g['r_home']}" if use_rankings and g['r_home'] != 99 else ''
+                  away_rank = f" #{g['r_away']}" if use_rankings and g['r_away'] != 99 else ''
                   block.append(
-                      f"| {hot}**{g['away']}** @ **{g['home']}**{g['rank_tag']} "
-                      f"| {g['away_score']} - {g['home_score']} "
+                      f"| {hot}**{g['home']}**{home_rank} "
+                      f"| **{g['away']}**{away_rank} "
+                      f"| {g['home_score']} - {g['away_score']} "
                       f"| {g['status_txt']} |"
                   )
               sections.append('\n'.join(block))
 
           if upcoming:
               block = ['### 🕐 今日待开赛\n']
-              block.append('| 比赛（客场 @ 主场）| 开赛时间(北京) |')
-              block.append('|:---|:---:|')
+              block.append('| 主场 | 客场 | 开赛时间(北京) |')
+              block.append('|:---|:---|:---:|')
               for g in upcoming:
                   hot = '🔥 ' if g['is_hot'] else ''
+                  home_rank = f" #{g['r_home']}" if use_rankings and g['r_home'] != 99 else ''
+                  away_rank = f" #{g['r_away']}" if use_rankings and g['r_away'] != 99 else ''
                   time = g['start_cst'] if g['start_cst'] else '-'
                   block.append(
-                      f"| {hot}**{g['away']}** @ **{g['home']}**{g['rank_tag']} "
+                      f"| {hot}**{g['home']}**{home_rank} "
+                      f"| **{g['away']}**{away_rank} "
                       f"| {time} |"
                   )
               sections.append('\n'.join(block))
 
           if finished:
               block = ['### ✅ 已结束\n']
-              block.append('| 比赛（客场 @ 主场）| 比分 | 结果 |')
-              block.append('|:---|:---:|:---:|')
+              block.append('| 主场 | 客场 | 比分 | 结果 |')
+              block.append('|:---|:---|:---:|:---:|')
               for g in finished:
                   hot = '🔥 ' if g['is_hot'] else ''
-                  winner = g['away'] if g['away_score'] > g['home_score'] else g['home']
-                  away_fmt = f"**{g['away']}**" if g['away'] == winner else g['away']
+                  winner = g['home'] if g['home_score'] > g['away_score'] else g['away']
+                  home_rank = f" #{g['r_home']}" if use_rankings and g['r_home'] != 99 else ''
+                  away_rank = f" #{g['r_away']}" if use_rankings and g['r_away'] != 99 else ''
                   home_fmt = f"**{g['home']}**" if g['home'] == winner else g['home']
+                  away_fmt = f"**{g['away']}**" if g['away'] == winner else g['away']
                   block.append(
-                      f"| {hot}{away_fmt} @ {home_fmt}{g['rank_tag']} "
-                      f"| {g['away_score']} - {g['home_score']} "
+                      f"| {hot}{home_fmt}{home_rank} "
+                      f"| {away_fmt}{away_rank} "
+                      f"| {g['home_score']} - {g['away_score']} "
                       f"| 🏆 **{winner}** |"
                   )
               sections.append('\n'.join(block))
