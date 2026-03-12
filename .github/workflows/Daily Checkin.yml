@@ -14,11 +14,11 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Random Delay (北京时间 08:00~09:00)
-        run: |
-          #delay=$((RANDOM % 3600))
-          echo "随机等待 ${delay} 秒（约 $((delay/60)) 分钟）"
-          sleep $delay
+      # - name: Random Delay (北京时间 08:00~09:00)
+      #   run: |
+      #     delay=$((RANDOM % 3600))
+      #     echo "随机等待 ${delay} 秒（约 $((delay/60)) 分钟）"
+      #     sleep $delay
 
       - name: Setup Python
         uses: actions/setup-python@v5
