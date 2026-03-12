@@ -1,14 +1,19 @@
-name: NBA Daily Push
+name: NBA Schedule
 
 on:
-  schedule:
-    - cron: '0 0 * * *'  # 每天北京时间早8点
   workflow_dispatch:
+  workflow_call:
+    outputs:
+      result:
+        description: "NBA赛程"
+        value: ${{ jobs.fetch.outputs.result }}
 
 jobs:
-  push:
+  fetch:
     runs-on: ubuntu-latest
-
+    outputs:
+      result: ${{ steps.fetch.outputs.result }}
+    
     steps:
       - name: Setup Python
         uses: actions/setup-python@v5
@@ -18,9 +23,8 @@ jobs:
       - name: Install dependencies
         run: pip install requests beautifulsoup4 --break-system-packages
 
-      - name: Fetch NBA & Push
-        env:
-          SERVERCHAN_KEY: ${{ secrets.SERVERCHAN_KEY }}
+      - name: NBA Schedule
+        id: fetch
         run: |
           python3 - << 'EOF'
           import requests, os, re
@@ -28,10 +32,9 @@ jobs:
           from bs4 import BeautifulSoup
 
           cst = timezone(timedelta(hours=8))
-          now = datetime.now(cst).strftime('%Y-%m-%d %H:%M')
 
           headers = {
-              'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+              'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
               'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
               'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.8',
               'Referer': 'https://www.hupu.com/',
@@ -45,9 +48,6 @@ jobs:
                   return ''
 
           def get_standings_from_hupu():
-              """
-              从虎扑获取NBA积分榜 - 使用总排名
-              """
               HUPU_TO_NBA_ID = {
                   '骑士': '1610612739', '凯尔特人': '1610612738', '尼克斯': '1610612752',
                   '魔术': '1610612753', '雄鹿': '1610612749', '步行者': '1610612754',
@@ -63,16 +63,13 @@ jobs:
               
               try:
                   url = 'https://nba.hupu.com/stats/teams'
-                  print(f"正在访问虎扑: {url}")
                   r = requests.get(url, headers=headers, timeout=15)
-                  print(f"虎扑响应状态码: {r.status_code}")
                   
                   if r.status_code == 200:
                       soup = BeautifulSoup(r.text, 'html.parser')
                       ranking = {}
                       
                       tables = soup.find_all('table')
-                      print(f"找到 {len(tables)} 个表格")
                       
                       for table in tables:
                           rows = table.find_all('tr')
@@ -92,23 +89,12 @@ jobs:
                                               break
                       
                       if len(ranking) >= 28:
-                          print(f"✅ 虎扑积分榜加载成功，共 {len(ranking)} 支球队")
                           return ranking
-                      else:
-                          print(f"⚠️ 虎扑数据不完整，只获取到 {len(ranking)} 支球队")
                   
               except Exception as e:
                   print(f"⚠️ 虎扑爬取失败: {e}")
               
               return None
-
-          def get_standings():
-              ranking = get_standings_from_hupu()
-              if ranking and len(ranking) >= 28:
-                  return ranking
-              
-              print("降级使用ESPN数据源")
-              return get_standings_espn()
 
           def get_standings_espn():
               ESPN_TO_NBA_ID = {
@@ -127,7 +113,6 @@ jobs:
                   url = 'https://site.web.api.espn.com/apis/v2/sports/basketball/nba/standings'
                   params = {'season': 2025, 'seasontype': 2}
                   r = requests.get(url, headers={'User-Agent': headers['User-Agent']}, params=params, timeout=10)
-                  print(f"ESPN积分榜状态码: {r.status_code}")
                   
                   data = r.json()
                   ranking = {}
@@ -141,12 +126,17 @@ jobs:
                               ranking[nba_id] = i
                   
                   if ranking:
-                      print(f"✅ ESPN积分榜加载成功，共 {len(ranking)} 支球队")
                       return ranking
                   return None
               except Exception as e:
                   print(f"❌ ESPN失败: {e}")
                   return None
+
+          def get_standings():
+              ranking = get_standings_from_hupu()
+              if ranking and len(ranking) >= 28:
+                  return ranking
+              return get_standings_espn()
 
           def calc_hot_games(games, ranking):
               if ranking is None:
@@ -174,7 +164,6 @@ jobs:
               hot_ids = {gid for score, gid in scored[:2] if score > 0}
               return hot_ids, rank_info
 
-          # ── 获取今日赛程 ──
           r = requests.get(
               'https://cdn.nba.com/static/json/liveData/scoreboard/todaysScoreboard_00.json',
               headers={'User-Agent': headers['User-Agent']}, timeout=10
@@ -217,7 +206,6 @@ jobs:
               else:
                   upcoming.append(info)
 
-          # ── Markdown 排版 ──
           sections = [f"**赛事日期:** {game_date}\n"]
 
           if ongoing:
@@ -280,19 +268,8 @@ jobs:
           elif not use_rankings:
               sections.append('> ⚠️ 积分榜数据暂不可用，本次不标注热门场次')
 
-          desp = '\n\n'.join(sections)
-          title = f'🏀 NBA 今日赛程 {now}'
-
-          print(desp)
-
-          key = os.environ.get('SERVERCHAN_KEY', '')
-          if key:
-              resp = requests.post(
-                  f"https://sctapi.ftqq.com/{key}.send",
-                  data={'title': title, 'desp': desp},
-                  timeout=10
-              )
-              print("推送结果:", resp.json())
-          else:
-              print("未设置 SERVERCHAN_KEY，跳过推送")
+          result = '\n\n'.join(sections)
+          print(result)
+          with open(os.environ['GITHUB_OUTPUT'], 'a') as f:
+              f.write(f"result<<ENDNBA\n{result}\nENDNBA\n")
           EOF
