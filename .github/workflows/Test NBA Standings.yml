@@ -1,4 +1,4 @@
-name: Test NBA Standings
+name: Test NBA Standings 2
 
 on:
   workflow_dispatch:
@@ -18,24 +18,17 @@ jobs:
           python3 - << 'EOF'
           import requests
 
-          headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'}
+          ua = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
 
-          # 测试几个候选接口
           urls = [
-              'https://cdn.nba.com/static/json/staticData/teamStandings.json',
-              'https://cdn.nba.com/static/json/liveData/standings/standings_00.json',
-              'https://api.sportradar.com/nba/trial/v8/en/seasons/2025/REG/standings.json',
-              'https://data.nba.net/10s/prod/v1/current/standings_all.json',
-              'https://data.nba.net/prod/v1/current/standings_all.json',
-          ]
-
-          for url in urls:
-              try:
-                  r = requests.get(url, headers=headers, timeout=8)
-                  print(f"[{r.status_code}] {url}")
-                  if r.status_code == 200:
-                      data = r.json()
-                      print(f"  顶层 keys: {list(data.keys())[:5]}")
-              except Exception as e:
-                  print(f"[ERR] {url} → {e}")
-          EOF
+              # Tank01 - 完全免费无需key
+              ('GET', 'https://tank01-fantasy-stats.p.rapidapi.com/getNBAStandings?seasonYear=2025', {
+                  'User-Agent': ua,
+              }),
+              # sportsdata.io 免费tier
+              ('GET', 'https://api.sportsdata.io/v3/nba/scores/json/Standings/2025', {
+                  'User-Agent': ua,
+              }),
+              # thesportsdb 完全免费
+              ('GET', 'https://www.thesportsdb.com/api/v1/json/3/lookuptable.php?l=4387&s=2024-2025', {
+                  'User-Agent': ua,
