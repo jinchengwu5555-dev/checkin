@@ -46,9 +46,8 @@ jobs:
 
           def get_standings_from_hupu():
               """
-              从虎扑获取NBA积分榜
+              从虎扑获取NBA积分榜 - 使用总排名
               """
-              # 虎扑NBA积分榜页面
               HUPU_TO_NBA_ID = {
                   '骑士': '1610612739', '凯尔特人': '1610612738', '尼克斯': '1610612752',
                   '魔术': '1610612753', '雄鹿': '1610612749', '步行者': '1610612754',
@@ -63,7 +62,6 @@ jobs:
               }
               
               try:
-                  # 尝试虎扑NBA数据接口
                   url = 'https://nba.hupu.com/stats/teams'
                   print(f"正在访问虎扑: {url}")
                   r = requests.get(url, headers=headers, timeout=15)
@@ -73,13 +71,8 @@ jobs:
                       soup = BeautifulSoup(r.text, 'html.parser')
                       ranking = {}
                       
-                      # 查找积分榜表格
-                      tables = soup.find_all('table', class_='players_table')
-                      
-                      if not tables:
-                          # 尝试其他可能的class
-                          tables = soup.find_all('table')
-                      
+                      # 查找表格
+                      tables = soup.find_all('table')
                       print(f"找到 {len(tables)} 个表格")
                       
                       for table in tables:
@@ -87,7 +80,7 @@ jobs:
                           for row in rows[1:]:  # 跳过表头
                               cols = row.find_all('td')
                               if len(cols) >= 2:
-                                  # 尝试提取排名和队名
+                                  # 提取排名和队名
                                   rank_text = cols[0].get_text(strip=True)
                                   team_text = cols[1].get_text(strip=True)
                                   
@@ -105,46 +98,19 @@ jobs:
                       if len(ranking) >= 28:
                           print(f"✅ 虎扑积分榜加载成功，共 {len(ranking)} 支球队")
                           sorted_teams = sorted(ranking.items(), key=lambda x: x[1])
-                          for team_id, rank in sorted_teams[:5]:
-                              print(f"  teamId={team_id} rank={rank}")
+                          print("前10名球队:")
+                          for team_id, rank in sorted_teams[:10]:
+                              # 反查队名
+                              team_name = [name for name, tid in HUPU_TO_NBA_ID.items() if tid == team_id][0]
+                              print(f"  #{rank} {team_name} (teamId={team_id})")
                           return ranking
                       else:
                           print(f"⚠️ 虎扑数据不完整，只获取到 {len(ranking)} 支球队")
                   
               except Exception as e:
                   print(f"⚠️ 虎扑爬取失败: {e}")
-              
-              # 尝试虎扑API接口
-              try:
-                  api_url = 'https://games.mobileapi.hupu.com/1/7.5.60/nba/getTeamStandings'
-                  api_headers = {
-                      **headers,
-                      'Accept': 'application/json',
-                  }
-                  print(f"尝试虎扑API: {api_url}")
-                  r = requests.get(api_url, headers=api_headers, timeout=10)
-                  print(f"虎扑API状态码: {r.status_code}")
-                  
-                  if r.status_code == 200:
-                      data = r.json()
-                      ranking = {}
-                      
-                      # 解析API返回的数据结构
-                      if 'result' in data:
-                          for conf in data['result'].values():
-                              if isinstance(conf, list):
-                                  for i, team in enumerate(conf, 1):
-                                      team_name = team.get('name', '')
-                                      team_id = HUPU_TO_NBA_ID.get(team_name)
-                                      if team_id:
-                                          ranking[team_id] = i
-                      
-                      if len(ranking) >= 28:
-                          print(f"✅ 虎扑API加载成功，共 {len(ranking)} 支球队")
-                          return ranking
-                      
-              except Exception as e:
-                  print(f"⚠️ 虎扑API失败: {e}")
+                  import traceback
+                  traceback.print_exc()
               
               return None
 
@@ -216,8 +182,9 @@ jobs:
                       score = 0
                   else:
                       score = (99 - r_away) + (99 - r_home)
-                      if r_away <= 8 and r_home <= 8:
-                          score += 10
+                      # 双方都在前10名，额外加权
+                      if r_away <= 10 and r_home <= 10:
+                          score += 15
                   
                   game_id = str(g['gameId'])
                   scored.append((score, game_id))
@@ -324,7 +291,7 @@ jobs:
 
           if use_rankings and hot_ids:
               team_count = len(ranking) if ranking else 0
-              sections.append(f'> 🔥 热门: 基于赛区排名计算（已获取 {team_count}/30 支球队排名）')
+              sections.append(f'> 🔥 热门: 基于总排名计算，前10强对决额外加权（已获取 {team_count}/30 支球队）')
           elif not use_rankings:
               sections.append('> ⚠️ 积分榜数据暂不可用，本次不标注热门场次')
 
