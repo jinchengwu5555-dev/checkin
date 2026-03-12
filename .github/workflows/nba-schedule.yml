@@ -1,4 +1,4 @@
-name: NBA Schedule
+name: NBA Schedule 1
 
 on:
   workflow_dispatch:
