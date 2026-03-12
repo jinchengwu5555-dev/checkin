@@ -1,0 +1,55 @@
+name: Steam Sales
+
+on:
+  workflow_dispatch:
+  workflow_call:
+    outputs:
+      result:
+        description: "Steam特惠"
+        value: ${{ jobs.fetch.outputs.result }}
+
+jobs:
+  fetch:
+    runs-on: ubuntu-latest
+    outputs:
+      result: ${{ steps.fetch.outputs.result }}
+    
+    steps:
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: pip install requests --break-system-packages
+
+      - name: Steam Sales
+        id: fetch
+        run: |
+          python3 - << 'EOF'
+          import requests, os
+
+          lines = ['🎮 Steam 今日特惠 Top 10']
+
+          try:
+              r = requests.get('https://store.steampowered.com/api/featuredcategories?cc=cn&l=schinese', timeout=15)
+              specials = r.json().get('specials', {}).get('items', [])[:10]
+              if specials:
+                  for item in specials:
+                      name     = item.get('name', '未知')
+                      discount = item.get('discount_percent', 0)
+                      final    = item.get('final_price', 0) / 100
+                      original = item.get('original_price', 0) / 100
+                      if discount > 0:
+                          lines.append(f"  🏷 {name}")
+                          lines.append(f"     -{discount}% ¥{original:.0f} → ¥{final:.0f}")
+              else:
+                  lines.append('暂无特惠数据')
+          except Exception as e:
+              lines.append(f"⚠️ 获取失败: {e}")
+
+          result = '\n'.join(lines)
+          print(result)
+          with open(os.environ['GITHUB_OUTPUT'], 'a') as f:
+              f.write(f"result<<ENDSTEAM\n{result}\nENDSTEAM\n")
+          EOF
