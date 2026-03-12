@@ -1,12 +1,10 @@
 name: Daily Summary
-
 on:
   workflow_dispatch:
   schedule:
-    - cron: '0 0 * * *'  # UTC 00:00（北京时间 08:00）
+    - cron: '0 0 * * *'
 
 jobs:
-  # 延时任务
   delay:
     runs-on: ubuntu-latest
     steps:
@@ -16,53 +14,43 @@ jobs:
           echo "随机等待 ${delay} 秒（约 $((delay/60)) 分钟）"
           sleep $delay
 
-  # 调用所有子 workflow（依赖延时完成）
   bilibili:
     needs: delay
     uses: ./.github/workflows/bilibili-checkin.yml
     secrets: inherit
-
   juejin:
     needs: delay
     uses: ./.github/workflows/juejin-checkin.yml
     secrets: inherit
-
   baidu:
     needs: delay
     uses: ./.github/workflows/baidu-checkin.yml
     secrets: inherit
-
   jd:
     needs: delay
     uses: ./.github/workflows/jd-checkin.yml
     secrets: inherit
-
   epic:
     needs: delay
     uses: ./.github/workflows/epic-games.yml
-
   steam:
     needs: delay
     uses: ./.github/workflows/steam-sales.yml
-
   etf:
     needs: delay
     uses: ./.github/workflows/etf-stock.yml
-
   exchange:
     needs: delay
     uses: ./.github/workflows/exchange-rates.yml
-
   nba:
     needs: delay
     uses: ./.github/workflows/nba-schedule.yml
 
-  # 汇总推送
   push:
     needs: [bilibili, juejin, baidu, jd, epic, steam, etf, exchange, nba]
     runs-on: ubuntu-latest
-    if: always()  # 即使某些任务失败也执行推送
-    
+    if: always()
+
     steps:
       - name: Setup Python
         uses: actions/setup-python@v5
@@ -75,34 +63,52 @@ jobs:
       - name: Push to Server酱
         env:
           SERVERCHAN_KEY: ${{ secrets.SERVERCHAN_KEY }}
+          # ── 把每个 output 存为独立环境变量，避免多行内容直接展开到 Python 字符串 ──
+          RESULT_BILIBILI:  ${{ needs.bilibili.outputs.result }}
+          RESULT_JUEJIN:    ${{ needs.juejin.outputs.result }}
+          RESULT_BAIDU:     ${{ needs.baidu.outputs.result }}
+          RESULT_JD:        ${{ needs.jd.outputs.result }}
+          RESULT_EPIC:      ${{ needs.epic.outputs.result }}
+          RESULT_STEAM:     ${{ needs.steam.outputs.result }}
+          RESULT_ETF:       ${{ needs.etf.outputs.result }}
+          RESULT_EXCHANGE:  ${{ needs.exchange.outputs.result }}
+          RESULT_NBA:       ${{ needs.nba.outputs.result }}
         run: |
           python3 - << 'EOF'
-          import os, requests, datetime
+          import os, requests
+          from datetime import datetime, timezone, timedelta
 
           key = os.environ.get('SERVERCHAN_KEY', '')
           if not key:
               print("未设置 SERVERCHAN_KEY，跳过推送")
               exit(0)
 
-          now = datetime.datetime.now(datetime.timezone(datetime.timedelta(hours=8))).strftime("%Y-%m-%d %H:%M")
+          cst = timezone(timedelta(hours=8))
+          now = datetime.now(cst).strftime("%Y-%m-%d %H:%M")
           title = f"📋 每日报告 {now}"
 
-          # 从环境变量获取各个任务的结果
-          sections = [
-              "${{ needs.bilibili.outputs.result }}" or "📺 Bilibili: 未运行",
-              "${{ needs.juejin.outputs.result }}" or "🪙 掘金: 未运行",
-              "${{ needs.baidu.outputs.result }}" or "☁️ 百度网盘: 未运行",
-              "${{ needs.jd.outputs.result }}" or "🛒 京东: 未运行",
-              "${{ needs.epic.outputs.result }}" or "🎮 Epic: 未运行",
-              "${{ needs.steam.outputs.result }}" or "🎮 Steam: 未运行",
-              "${{ needs.etf.outputs.result }}" or "📊 ETF行情: 未运行",
-              "${{ needs.exchange.outputs.result }}" or "💱 汇率: 未运行",
-              "${{ needs.nba.outputs.result }}" or "🏀 NBA: 未运行",
-          ]
-          
-          desp = '\n\n---\n\n'.join(sections)
+          # 从环境变量读取，缺失时显示"未运行"
+          def get(key, fallback):
+              v = os.environ.get(key, '').strip()
+              return v if v else fallback
 
-          url = f"https://sctapi.ftqq.com/{key}.send"
-          r = requests.post(url, data={'title': title, 'desp': desp}, timeout=10)
+          sections = [
+              get('RESULT_BILIBILI', '📺 Bilibili: 未运行'),
+              get('RESULT_JUEJIN',   '🪙 掘金: 未运行'),
+              get('RESULT_BAIDU',    '☁️ 百度网盘: 未运行'),
+              get('RESULT_JD',       '🛒 京东: 未运行'),
+              get('RESULT_EPIC',     '🎮 Epic: 未运行'),
+              get('RESULT_STEAM',    '🎮 Steam: 未运行'),
+              get('RESULT_ETF',      '📊 ETF行情: 未运行'),
+              get('RESULT_EXCHANGE', '💱 汇率: 未运行'),
+              get('RESULT_NBA',      '🏀 NBA: 未运行'),
+          ]
+
+          desp = '\n\n---\n\n'.join(sections)
+          r = requests.post(
+              f"https://sctapi.ftqq.com/{key}.send",
+              data={'title': title, 'desp': desp},
+              timeout=10
+          )
           print("Server酱推送结果:", r.json())
           EOF
