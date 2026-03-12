@@ -1,18 +1,11 @@
-name: NBA Schedule
+name: NBA Schedule Debug
 
 on:
   workflow_dispatch:
-  workflow_call:
-    outputs:
-      result:
-        description: "NBA赛程"
-        value: ${{ jobs.fetch.outputs.result }}
 
 jobs:
   fetch:
     runs-on: ubuntu-latest
-    outputs:
-      result: ${{ steps.fetch.outputs.result }}
     
     steps:
       - name: Setup Python
@@ -23,28 +16,16 @@ jobs:
       - name: Install dependencies
         run: pip install requests --break-system-packages
 
-      - name: NBA Schedule
-        id: fetch
+      - name: NBA Schedule Debug
         run: |
           python3 - << 'EOF'
-          import requests, os
+          import requests
           from datetime import datetime, timezone, timedelta
 
           cst = timezone(timedelta(hours=8))
-
-          headers = {
-              'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-          }
-
-          def et_to_cst(utc_str):
-              try:
-                  dt = datetime.fromisoformat(utc_str.replace('Z', '+00:00'))
-                  return dt.astimezone(cst).strftime('%H:%M')
-              except:
-                  return ''
+          headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'}
 
           def get_standings_espn():
-              """从 ESPN 获取 NBA 积分榜，返回 {team_id: rank} 字典"""
               try:
                   url = 'https://site.web.api.espn.com/apis/v2/sports/basketball/nba/standings'
                   params = {'season': 2025, 'seasontype': 2}
@@ -56,7 +37,6 @@ jobs:
                   data = r.json()
                   all_teams = []
                   
-                  # 收集所有球队数据
                   for conf in data.get('children', []):
                       entries = conf.get('standings', {}).get('entries', [])
                       
@@ -69,7 +49,6 @@ jobs:
                               'name': team.get('displayName', ''),
                           }
                           
-                          # 提取胜负数据
                           for stat in stats:
                               stat_name = stat.get('name', '')
                               if stat_name == 'wins':
@@ -79,57 +58,23 @@ jobs:
                           
                           all_teams.append(team_data)
                   
-                  # 按胜率排序
                   for team in all_teams:
                       total = team.get('wins', 0) + team.get('losses', 0)
                       team['win_pct'] = team.get('wins', 0) / total if total > 0 else 0
                   
                   all_teams.sort(key=lambda x: x['win_pct'], reverse=True)
                   
-                  # 生成排名字典
                   ranking = {}
                   for i, team in enumerate(all_teams, 1):
                       ranking[team['id']] = i
+                      print(f"  {i:2d}. {team['name']:30s} (ID: {team['id']})")
                   
-                  print(f"✅ ESPN 积分榜加载成功，共 {len(ranking)} 支球队")
+                  print(f"\n✅ 共 {len(ranking)} 支球队")
                   return ranking
                   
               except Exception as e:
-                  print(f"⚠️ ESPN 积分榜获取失败: {e}")
+                  print(f"❌ 失败: {e}")
                   return None
-
-          def calc_hot_games(games, ranking):
-              """计算热门比赛"""
-              if ranking is None:
-                  return set(), {}
-              
-              scored = []
-              rank_info = {}
-              
-              for g in games:
-                  away_id = str(g['awayTeam'].get('teamId', ''))
-                  home_id = str(g['homeTeam'].get('teamId', ''))
-                  r_away = ranking.get(away_id, 99)
-                  r_home = ranking.get(home_id, 99)
-                  
-                  if r_away == 99 or r_home == 99:
-                      score = 0
-                  else:
-                      # 排名越靠前分数越高
-                      score = (31 - r_away) + (31 - r_home)
-                      # 前10强对决额外加分
-                      if r_away <= 10 and r_home <= 10:
-                          score += 20
-                  
-                  game_id = str(g['gameId'])
-                  scored.append((score, game_id))
-                  rank_info[game_id] = (r_away, r_home)
-              
-              # 选出分数最高的2场比赛
-              scored.sort(key=lambda x: x[0], reverse=True)
-              hot_ids = {gid for score, gid in scored[:2] if score > 0}
-              
-              return hot_ids, rank_info
 
           # 获取今日赛程
           r = requests.get(
@@ -138,113 +83,27 @@ jobs:
           )
           data = r.json()
           games = data.get('scoreboard', {}).get('games', [])
-          game_date = data.get('scoreboard', {}).get('gameDate', '')
 
-          # 获取积分榜
+          print("=" * 80)
+          print("ESPN 积分榜:")
+          print("=" * 80)
           ranking = get_standings_espn()
-          hot_ids, rank_info = calc_hot_games(games, ranking)
-          use_rankings = ranking is not None
 
-          # 分类比赛
-          finished, ongoing, upcoming = [], [], []
-
+          print("\n" + "=" * 80)
+          print("今日比赛球队 ID:")
+          print("=" * 80)
           for g in games:
               away = g['awayTeam']
               home = g['homeTeam']
-              status = g.get('gameStatus', 1)
-              status_txt = g.get('gameStatusText', '').strip()
-              start_cst = et_to_cst(g.get('gameTimeUTC', ''))
-              game_id = str(g['gameId'])
-              is_hot = game_id in hot_ids
-              r_away, r_home = rank_info.get(game_id, (99, 99))
-
-              info = {
-                  'home': f"{home['teamCity']} {home['teamName']}",
-                  'away': f"{away['teamCity']} {away['teamName']}",
-                  'home_score': home.get('score', 0),
-                  'away_score': away.get('score', 0),
-                  'status_txt': status_txt,
-                  'start_cst': start_cst,
-                  'r_home': r_home,
-                  'r_away': r_away,
-                  'is_hot': is_hot,
-              }
+              away_id = str(away.get('teamId', ''))
+              home_id = str(home.get('teamId', ''))
+              away_name = f"{away['teamCity']} {away['teamName']}"
+              home_name = f"{home['teamCity']} {home['teamName']}"
               
-              if status == 3:
-                  finished.append(info)
-              elif status == 2:
-                  ongoing.append(info)
-              else:
-                  upcoming.append(info)
-
-          # 生成 Markdown 输出
-          sections = [f"**赛事日期:** {game_date}\n"]
-
-          if ongoing:
-              block = ['### 🔴 进行中\n']
-              block.append('| 主场 | 客场 | 比分 | 节次 |')
-              block.append('|:---|:---|:---:|:---:|')
-              for g in ongoing:
-                  hot = '🔥 ' if g['is_hot'] else ''
-                  # 始终显示排名
-                  home_rank = f" (#{g['r_home']})" if use_rankings and g['r_home'] != 99 else ''
-                  away_rank = f" (#{g['r_away']})" if use_rankings and g['r_away'] != 99 else ''
-                  block.append(
-                      f"| {hot}**{g['home']}**{home_rank} "
-                      f"| **{g['away']}**{away_rank} "
-                      f"| {g['home_score']} - {g['away_score']} "
-                      f"| {g['status_txt']} |"
-                  )
-              sections.append('\n'.join(block))
-
-          if upcoming:
-              block = ['### 🕐 今日待开赛\n']
-              block.append('| 主场 | 客场 | 开赛时间(北京) |')
-              block.append('|:---|:---|:---:|')
-              for g in upcoming:
-                  hot = '🔥 ' if g['is_hot'] else ''
-                  # 始终显示排名
-                  home_rank = f" (#{g['r_home']})" if use_rankings and g['r_home'] != 99 else ''
-                  away_rank = f" (#{g['r_away']})" if use_rankings and g['r_away'] != 99 else ''
-                  time = g['start_cst'] if g['start_cst'] else '-'
-                  block.append(
-                      f"| {hot}**{g['home']}**{home_rank} "
-                      f"| **{g['away']}**{away_rank} "
-                      f"| {time} |"
-                  )
-              sections.append('\n'.join(block))
-
-          if finished:
-              block = ['### ✅ 已结束\n']
-              block.append('| 主场 | 客场 | 比分 | 结果 |')
-              block.append('|:---|:---|:---:|:---:|')
-              for g in finished:
-                  hot = '🔥 ' if g['is_hot'] else ''
-                  winner = g['home'] if g['home_score'] > g['away_score'] else g['away']
-                  # 始终显示排名
-                  home_rank = f" (#{g['r_home']})" if use_rankings and g['r_home'] != 99 else ''
-                  away_rank = f" (#{g['r_away']})" if use_rankings and g['r_away'] != 99 else ''
-                  home_fmt = f"**{g['home']}**" if g['home'] == winner else g['home']
-                  away_fmt = f"**{g['away']}**" if g['away'] == winner else g['away']
-                  block.append(
-                      f"| {hot}{home_fmt}{home_rank} "
-                      f"| {away_fmt}{away_rank} "
-                      f"| {g['home_score']} - {g['away_score']} "
-                      f"| 🏆 **{winner}** |"
-                  )
-              sections.append('\n'.join(block))
-
-          if not games:
-              sections.append('今日暂无比赛')
-
-          if use_rankings and hot_ids:
-              team_count = len(ranking) if ranking else 0
-              sections.append(f'> 🔥 热门: 基于 ESPN 总排名计算，前10强对决额外加权（已获取 {team_count}/30 支球队）')
-          elif not use_rankings:
-              sections.append('> ⚠️ 积分榜数据暂不可用，本次不标注热门场次')
-
-          result = '\n\n'.join(sections)
-          print(result)
-          with open(os.environ['GITHUB_OUTPUT'], 'a') as f:
-              f.write(f"result<<ENDNBA\n{result}\nENDNBA\n")
+              away_rank = ranking.get(away_id, 'N/A') if ranking else 'N/A'
+              home_rank = ranking.get(home_id, 'N/A') if ranking else 'N/A'
+              
+              print(f"\n{home_name} (ID: {home_id}) - 排名: #{home_rank}")
+              print(f"  vs")
+              print(f"{away_name} (ID: {away_id}) - 排名: #{away_rank}")
           EOF
