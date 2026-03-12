@@ -1,4 +1,4 @@
-name: Test TheSportsDB
+name: Test NBA Standings from Scoreboard
 
 on:
   workflow_dispatch:
@@ -16,25 +16,25 @@ jobs:
       - name: Test
         run: |
           python3 - << 'EOF'
-          import requests
+          import requests, json
 
-          ua = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+          headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'}
 
-          # thesportsdb 返回了200，看原始内容
+          # 看看 todaysScoreboard 里每支球队有哪些字段
           r = requests.get(
-              'https://www.thesportsdb.com/api/v1/json/3/lookuptable.php?l=4387&s=2024-2025',
-              headers={'User-Agent': ua}, timeout=8
+              'https://cdn.nba.com/static/json/liveData/scoreboard/todaysScoreboard_00.json',
+              headers=headers, timeout=10
           )
-          print(f"状态码: {r.status_code}")
-          print(f"Content-Type: {r.headers.get('Content-Type', '')}")
-          print(f"原始内容前500字符:\n{r.text[:500]}")
-          print("---")
+          data  = r.json()
+          games = data['scoreboard']['games']
 
-          # 同时测试 thesportsdb 免费key=1的接口
-          r2 = requests.get(
-              'https://www.thesportsdb.com/api/v1/json/1/lookuptable.php?l=4387&s=2024-2025',
-              headers={'User-Agent': ua}, timeout=8
-          )
-          print(f"key=1 状态码: {r2.status_code}")
-          print(f"key=1 内容前500字符:\n{r2.text[:500]}")
+          if games:
+              g = games[0]
+              print("awayTeam 全部字段:")
+              print(json.dumps(g['awayTeam'], indent=2, ensure_ascii=False))
+              print("\nhomeTeam 全部字段:")
+              print(json.dumps(g['homeTeam'], indent=2, ensure_ascii=False))
+          else:
+              print("今日无比赛，打印 scoreboard 顶层结构:")
+              print(json.dumps(data['scoreboard'], indent=2, ensure_ascii=False)[:1000])
           EOF
