@@ -1,0 +1,71 @@
+name: Baidu Netdisk Checkin
+
+on:
+  workflow_dispatch:
+  workflow_call:
+    outputs:
+      result:
+        description: "百度网盘签到结果"
+        value: ${{ jobs.checkin.outputs.result }}
+
+jobs:
+  checkin:
+    runs-on: ubuntu-latest
+    outputs:
+      result: ${{ steps.checkin.outputs.result }}
+    
+    steps:
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: pip install requests dailycheckin --break-system-packages
+
+      - name: Baidu Netdisk Checkin
+        id: checkin
+        env:
+          BAIDUWP_COOKIE: ${{ secrets.BAIDUWP_COOKIE }}
+        run: |
+          python3 - << 'EOF'
+          import os, json, subprocess, sys
+
+          cookie = os.environ.get('BAIDUWP_COOKIE', '')
+          if not cookie:
+              result = "☁️ 百度网盘\n❌ 签到失败: 未设置 BAIDUWP_COOKIE"
+              print(result)
+              with open(os.environ['GITHUB_OUTPUT'], 'a') as f:
+                  f.write(f"result<<ENDBAIDU\n{result}\nENDBAIDU\n")
+              sys.exit(0)
+
+          try:
+              with open('config.json', 'r') as f:
+                  config = json.load(f)
+              config['BAIDUWP'][0]['cookie'] = cookie
+              with open('config.json', 'w') as f:
+                  json.dump(config, f)
+          except Exception:
+              config = {"BAIDUWP": [{"cookie": cookie}]}
+              with open('config.json', 'w') as f:
+                  json.dump(config, f)
+
+          proc = subprocess.run(['dailycheckin'], capture_output=True, text=True)
+          output = proc.stdout + proc.stderr
+
+          keep = []
+          for line in output.splitlines():
+              line = line.strip()
+              if not line: continue
+              if any(x in line for x in ['当前时间', '当前版本', '使用配置', '本次执行', '账号数', '开始执行', '---']): continue
+              keep.append(line)
+
+          joined = '\n'.join(keep)
+          status = '✅ 签到成功' if '✅' in joined else ('❌ 签到失败' if 'fail' in joined.lower() or '失败' in joined else 'ℹ️ 今日已签到')
+
+          lines = ['☁️ 百度网盘', status] + (keep if keep else [])
+          result = '\n'.join(lines)
+          print(result)
+          with open(os.environ['GITHUB_OUTPUT'], 'a') as f:
+              f.write(f"result<<ENDBAIDU\n{result}\nENDBAIDU\n")
+          EOF
