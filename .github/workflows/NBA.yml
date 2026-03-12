@@ -1,4 +1,4 @@
-name: Test NBA
+name: Test NBA Push
 
 on:
   workflow_dispatch:
@@ -16,57 +16,180 @@ jobs:
       - name: Install dependencies
         run: pip install requests --break-system-packages
 
-      - name: Fetch NBA Data
+      - name: Fetch NBA & Push
+        env:
+          SERVERCHAN_KEY: ${{ secrets.SERVERCHAN_KEY }}
         run: |
           python3 - << 'EOF'
-          import requests, json
+          import requests, os
           from datetime import datetime, timezone, timedelta
 
-          # 北京时间今天日期
           cst = timezone(timedelta(hours=8))
-          today = datetime.now(cst).strftime('%Y-%m-%d')
-          print(f"查询日期: {today}\n")
+          now = datetime.now(cst).strftime('%Y-%m-%d %H:%M')
 
           headers = {
               'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
               'Accept': 'application/json',
           }
 
-          # NBA 官方数据接口（无需 key）
-          url = f"https://cdn.nba.com/static/json/liveData/scoreboard/todaysScoreboard_00.json"
+          def et_to_cst(utc_str):
+              try:
+                  dt = datetime.fromisoformat(utc_str.replace('Z', '+00:00'))
+                  return dt.astimezone(cst).strftime('%H:%M')
+              except:
+                  return ''
+
+          # ── 获取东西部积分榜排名 ──
+          def get_standings():
+              """返回 {teamId: rank} 东西部各自排名，第1名最高"""
+              ranking = {}
+              try:
+                  url = 'https://cdn.nba.com/static/json/staticData/standings.json'
+                  r = requests.get(url, headers=headers, timeout=10)
+                  data = r.json()
+                  rows = data['standings']['rows']
+                  # 按各自分区排名排序，取 teamId 和 playoffRank
+                  for row in rows:
+                      team_id     = str(row.get('teamId', ''))
+                      playoff_rank = int(row.get('playoffRank', 99))
+                      ranking[team_id] = playoff_rank
+              except Exception as e:
+                  print(f"获取积分榜失败: {e}")
+              return ranking
+
+          # ── 热门评分规则 ──
+          def hot_score(away_id, home_id, ranking):
+              """
+              两队排名相加越小越热门（排名越靠前分越高）
+              额外规则：两队都在前8（季后赛区）+5分奖励
+              """
+              r_away = ranking.get(str(away_id), 99)
+              r_home = ranking.get(str(home_id), 99)
+              score  = (99 - r_away) + (99 - r_home)   # 排名越靠前得分越高
+              if r_away <= 8 and r_home <= 8:
+                  score += 5                             # 双强对决额外加分
+              return score, r_away, r_home
+
+          # ── 获取今日赛程 ──
+          lines = [f'🏀 NBA 今日赛程  {now}']
 
           try:
-              r = requests.get(url, headers=headers, timeout=10)
-              print(f"状态码: {r.status_code}")
-              data = r.json()
-              print(f"原始响应（前500字符）:\n{json.dumps(data, ensure_ascii=False)[:500]}\n")
-
-              games = data.get('scoreboard', {}).get('games', [])
-              print(f"今日比赛数: {len(games)}")
+              r = requests.get(
+                  'https://cdn.nba.com/static/json/liveData/scoreboard/todaysScoreboard_00.json',
+                  headers=headers, timeout=10
+              )
+              data   = r.json()
+              games  = data.get('scoreboard', {}).get('games', [])
+              game_date = data.get('scoreboard', {}).get('gameDate', '')
+              lines.append(f'赛事日期: {game_date}')
 
               if not games:
-                  print("今日暂无比赛")
+                  lines.append('\n今日暂无比赛')
               else:
+                  ranking = get_standings()
+
+                  # 计算每场比赛热门分并排序，取前2
+                  scored = []
                   for g in games:
-                      home = g['homeTeam']
-                      away = g['awayTeam']
-                      status = g.get('gameStatusText', '')
-                      print(f"\n{away['teamCity']} {away['teamName']} {away.get('score','-')} "
-                            f"vs {home.get('score','-')} {home['teamCity']} {home['teamName']}")
-                      print(f"状态: {status}")
+                      away_id = str(g['awayTeam'].get('teamId', ''))
+                      home_id = str(g['homeTeam'].get('teamId', ''))
+                      score, r_away, r_home = hot_score(away_id, home_id, ranking)
+                      scored.append((score, r_away, r_home, g))
+
+                  scored.sort(key=lambda x: x[0], reverse=True)
+                  hot_game_ids = set(
+                      str(item[3]['gameId']) for item in scored[:2]
+                  )
+
+                  finished, ongoing, upcoming = [], [], []
+
+                  for score, r_away, r_home, g in scored:
+                      home       = g['homeTeam']
+                      away       = g['awayTeam']
+                      status     = g.get('gameStatus', 1)
+                      status_txt = g.get('gameStatusText', '')
+                      start_cst  = et_to_cst(g.get('gameTimeUTC', ''))
+                      is_hot     = str(g['gameId']) in hot_game_ids
+
+                      # 排名标注（无数据时不显示）
+                      rank_tag = ''
+                      if ranking:
+                          rank_tag = f" (#{r_away} vs #{r_home})"
+
+                      hot_tag = '🔥 热门  ' if is_hot else '      '
+
+                      info = {
+                          'away':       f"{away['teamCity']} {away['teamName']}",
+                          'home':       f"{home['teamCity']} {home['teamName']}",
+                          'away_score': away.get('score', 0),
+                          'home_score': home.get('score', 0),
+                          'status':     status,
+                          'status_txt': status_txt,
+                          'start_cst':  start_cst,
+                          'rank_tag':   rank_tag,
+                          'hot_tag':    hot_tag,
+                          'is_hot':     is_hot,
+                      }
+
+                      if status == 3:
+                          finished.append(info)
+                      elif status == 2:
+                          ongoing.append(info)
+                      else:
+                          upcoming.append(info)
+
+                  # ── 进行中 ──
+                  if ongoing:
+                      lines.append('\n🔴 进行中:')
+                      for g in ongoing:
+                          lines.append(
+                              f"  {g['hot_tag']}{g['away']}  "
+                              f"{g['away_score']} - {g['home_score']}  "
+                              f"{g['home']}{g['rank_tag']}"
+                          )
+                          lines.append(f"         📍 {g['status_txt']}")
+
+                  # ── 未开始 ──
+                  if upcoming:
+                      lines.append('\n🕐 今日待开赛:')
+                      for g in upcoming:
+                          time_str = f"  {g['start_cst']} (北京)" if g['start_cst'] else ''
+                          lines.append(
+                              f"  {g['hot_tag']}{g['away']}  vs  "
+                              f"{g['home']}{g['rank_tag']}{time_str}"
+                          )
+
+                  # ── 已结束 ──
+                  if finished:
+                      lines.append('\n✅ 已结束:')
+                      for g in finished:
+                          winner = g['away'] if g['away_score'] > g['home_score'] else g['home']
+                          lines.append(
+                              f"  {g['hot_tag']}{g['away']}  "
+                              f"{g['away_score']} - {g['home_score']}  "
+                              f"{g['home']}{g['rank_tag']}"
+                          )
+                          lines.append(f"         🏆 {winner} 获胜")
+
+                  # ── 热门比赛说明 ──
+                  if ranking:
+                      lines.append('\n📌 热门判断: 两队积分榜排名之和最小的前2场')
 
           except Exception as e:
-              print(f"❌ 请求失败: {e}")
+              lines.append(f"⚠️ 获取失败: {e}")
 
-          # 同时测试备用接口
-          print("\n\n--- 测试备用接口 (balldontlie) ---")
-          try:
-              today_fmt = datetime.now(cst).strftime('%Y-%m-%d')
-              url2 = f"https://api.balldontlie.io/v1/games?dates[]={today_fmt}&per_page=20"
-              r2 = requests.get(url2, headers=headers, timeout=10)
-              print(f"状态码: {r2.status_code}")
-              print(f"原始响应（前500字符）:\n{r2.text[:500]}")
-          except Exception as e:
-              print(f"❌ 备用接口失败: {e}")
+          result = '\n'.join(lines)
+          print(result)
 
+          # ── Server酱推送 ──
+          key = os.environ.get('SERVERCHAN_KEY', '')
+          if key:
+              resp = requests.post(
+                  f"https://sctapi.ftqq.com/{key}.send",
+                  data={'title': f'🏀 NBA 今日赛程 {now}', 'desp': result},
+                  timeout=10
+              )
+              print("推送结果:", resp.json())
+          else:
+              print("未设置 SERVERCHAN_KEY，跳过推送")
           EOF
