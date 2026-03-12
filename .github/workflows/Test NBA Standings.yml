@@ -1,4 +1,4 @@
-name: Test CN NBA API
+name: Test NBA Data Sources
 
 on:
   workflow_dispatch:
@@ -6,52 +6,279 @@ on:
 jobs:
   test:
     runs-on: ubuntu-latest
+    
     steps:
       - name: Setup Python
         uses: actions/setup-python@v5
         with:
           python-version: '3.11'
+
       - name: Install dependencies
-        run: pip install requests --break-system-packages
-      - name: Test
+        run: pip install requests beautifulsoup4 --break-system-packages
+
+      - name: Test NBA Data Sources
         run: |
           python3 - << 'EOF'
           import requests, json
+          from bs4 import BeautifulSoup
 
           ua = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
 
-          tests = [
-              # 新浪体育 NBA 积分榜 JSON 接口
-              ('新浪-积分榜', 'https://basketball.sports.sina.com.cn/nba/standing',
-               {'User-Agent': ua, 'Referer': 'https://sports.sina.com.cn/'}),
+          print("=" * 80)
+          print("测试 NBA 数据源")
+          print("=" * 80)
 
-              ('新浪-API', 'https://matchweb.sports.sina.com.cn/matchPosition/leagueStandings?competitionId=NBAB&v=2',
-               {'User-Agent': ua, 'Referer': 'https://sports.sina.com.cn/'}),
+          # ========================================
+          # 1. ESPN API (推荐)
+          # ========================================
+          print("\n【1】ESPN API - 积分榜")
+          try:
+              url = 'https://site.web.api.espn.com/apis/v2/sports/basketball/nba/standings'
+              params = {'season': 2025, 'seasontype': 2}
+              r = requests.get(url, params=params, timeout=10)
+              print(f"状态码: {r.status_code}")
+              
+              if r.status_code == 200:
+                  data = r.json()
+                  print(f"✅ 成功获取数据")
+                  print(f"分区数: {len(data.get('children', []))}")
+                  
+                  # 显示前5支球队
+                  for conf in data.get('children', [])[:1]:
+                      entries = conf.get('standings', {}).get('entries', [])[:5]
+                      print(f"\n{conf.get('name', '')} 前5名:")
+                      for i, entry in enumerate(entries, 1):
+                          team = entry.get('team', {})
+                          print(f"  {i}. {team.get('displayName', 'N/A')}")
+              else:
+                  print(f"❌ 请求失败: {r.text[:200]}")
+          except Exception as e:
+              print(f"❌ 异常: {e}")
 
-              # 腾讯体育 NBA 积分榜 JSON 接口
-              ('腾讯-API1', 'https://matchweb.sports.qq.com/kbs/list?from=NBA&type=team_standing&date=&callback=',
-               {'User-Agent': ua, 'Referer': 'https://sports.qq.com/'}),
+          # ========================================
+          # 2. NBA 官方 API
+          # ========================================
+          print("\n【2】NBA 官方 API - 积分榜")
+          try:
+              url = 'https://stats.nba.com/stats/leaguestandingsv3'
+              params = {
+                  'LeagueID': '00',
+                  'Season': '2024-25',
+                  'SeasonType': 'Regular Season'
+              }
+              headers = {
+                  'User-Agent': ua,
+                  'Referer': 'https://www.nba.com/',
+                  'Origin': 'https://www.nba.com',
+                  'Accept': 'application/json'
+              }
+              r = requests.get(url, params=params, headers=headers, timeout=10)
+              print(f"状态码: {r.status_code}")
+              
+              if r.status_code == 200:
+                  data = r.json()
+                  print(f"✅ 成功获取数据")
+                  standings = data.get('resultSets', [{}])[0]
+                  rows = standings.get('rowSet', [])
+                  print(f"球队数: {len(rows)}")
+                  
+                  # 显示前5支球队
+                  headers_list = standings.get('headers', [])
+                  if 'TeamName' in headers_list:
+                      team_idx = headers_list.index('TeamName')
+                      print("\n前5支球队:")
+                      for i, row in enumerate(rows[:5], 1):
+                          print(f"  {i}. {row[team_idx]}")
+              else:
+                  print(f"❌ 请求失败: {r.text[:200]}")
+          except Exception as e:
+              print(f"❌ 异常: {e}")
 
-              ('腾讯-API2', 'https://sportsapi.sports.qq.com/standard/getNBAStandings',
-               {'User-Agent': ua, 'Referer': 'https://sports.qq.com/'}),
+          # ========================================
+          # 3. NBA 官方 CDN - 今日赛程
+          # ========================================
+          print("\n【3】NBA 官方 CDN - 今日赛程")
+          try:
+              url = 'https://cdn.nba.com/static/json/liveData/scoreboard/todaysScoreboard_00.json'
+              r = requests.get(url, headers={'User-Agent': ua}, timeout=10)
+              print(f"状态码: {r.status_code}")
+              
+              if r.status_code == 200:
+                  data = r.json()
+                  games = data.get('scoreboard', {}).get('games', [])
+                  print(f"✅ 成功获取数据")
+                  print(f"今日比赛数: {len(games)}")
+                  
+                  if games:
+                      print("\n今日比赛:")
+                      for i, g in enumerate(games[:3], 1):
+                          away = g['awayTeam']
+                          home = g['homeTeam']
+                          print(f"  {i}. {away['teamCity']} {away['teamName']} @ {home['teamCity']} {home['teamName']}")
+                  else:
+                      print("今日无比赛")
+              else:
+                  print(f"❌ 请求失败")
+          except Exception as e:
+              print(f"❌ 异常: {e}")
 
-              # 新浪 NBA JSON
-              ('新浪-NBA-JSON', 'https://hq.sinajs.cn/list=nba_standing',
-               {'User-Agent': ua, 'Referer': 'https://sports.sina.com.cn/'}),
+          # ========================================
+          # 4. 虎扑 NBA 积分榜
+          # ========================================
+          print("\n【4】虎扑 NBA 积分榜")
+          try:
+              url = 'https://nba.hupu.com/stats/teams'
+              headers = {
+                  'User-Agent': ua,
+                  'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+                  'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.8',
+                  'Referer': 'https://www.hupu.com/',
+              }
+              r = requests.get(url, headers=headers, timeout=15)
+              print(f"状态码: {r.status_code}")
+              
+              if r.status_code == 200:
+                  soup = BeautifulSoup(r.text, 'html.parser')
+                  tables = soup.find_all('table')
+                  print(f"✅ 成功获取页面")
+                  print(f"表格数: {len(tables)}")
+                  
+                  if tables:
+                      # 尝试解析第一个表格
+                      rows = tables[0].find_all('tr')
+                      print(f"第一个表格行数: {len(rows)}")
+                      
+                      print("\n前5行内容:")
+                      for i, row in enumerate(rows[:5], 1):
+                          cols = row.find_all(['td', 'th'])
+                          text = ' | '.join([col.get_text(strip=True) for col in cols[:3]])
+                          print(f"  {i}. {text}")
+                  else:
+                      print("⚠️ 未找到表格")
+              else:
+                  print(f"❌ 请求失败")
+          except Exception as e:
+              print(f"❌ 异常: {e}")
 
-              # PP体育/苏宁
-              ('PP体育', 'https://api.ppsports.com/v1/basketball/nba/standing?season=2025',
-               {'User-Agent': ua}),
-          ]
+          # ========================================
+          # 5. 腾讯体育 NBA
+          # ========================================
+          print("\n【5】腾讯体育 NBA API")
+          try:
+              url = 'https://matchweb.sports.qq.com/kbs/list'
+              params = {
+                  'from': 'NBA',
+                  'type': 'team_standing',
+                  'callback': ''
+              }
+              headers = {
+                  'User-Agent': ua,
+                  'Referer': 'https://sports.qq.com/'
+              }
+              r = requests.get(url, params=params, headers=headers, timeout=10)
+              print(f"状态码: {r.status_code}")
+              
+              if r.status_code == 200:
+                  # 腾讯可能返回 JSONP，需要处理
+                  text = r.text.strip()
+                  if text.startswith('(') and text.endswith(')'):
+                      text = text[1:-1]
+                  
+                  try:
+                      data = json.loads(text)
+                      print(f"✅ 成功获取数据")
+                      print(f"数据键: {list(data.keys())[:5]}")
+                  except:
+                      print(f"⚠️ JSON 解析失败，内容前200字符:")
+                      print(f"  {text[:200]}")
+              else:
+                  print(f"❌ 请求失败")
+          except Exception as e:
+              print(f"❌ 异常: {e}")
 
-          for name, url, hdrs in tests:
-              try:
-                  r = requests.get(url, headers=hdrs, timeout=8)
-                  print(f"[{r.status_code}] {name}")
-                  if r.status_code == 200:
-                      text = r.text[:300]
-                      hits = sum(1 for kw in ['骑士','勇士','湖人','凯尔特','雄鹿','掘金','Cavaliers','Warriors','Lakers'] if kw in r.text)
-                      print(f"  关键词命中: {hits}  内容前200字符: {text[:200]}")
-              except Exception as e:
-                  print(f"[ERR] {name}: {str(e)[:80]}")
+          # ========================================
+          # 6. 新浪体育 NBA
+          # ========================================
+          print("\n【6】新浪体育 NBA")
+          try:
+              url = 'https://hq.sinajs.cn/list=nba_standing'
+              headers = {
+                  'User-Agent': ua,
+                  'Referer': 'https://sports.sina.com.cn/'
+              }
+              r = requests.get(url, headers=headers, timeout=10)
+              print(f"状态码: {r.status_code}")
+              
+              if r.status_code == 200:
+                  print(f"✅ 成功获取响应")
+                  print(f"内容长度: {len(r.text)}")
+                  print(f"内容前300字符:")
+                  print(f"  {r.text[:300]}")
+                  
+                  if 'var hq_str_nba_standing=""' in r.text:
+                      print("⚠️ 返回内容为空")
+              else:
+                  print(f"❌ 请求失败")
+          except Exception as e:
+              print(f"❌ 异常: {e}")
+
+          # ========================================
+          # 7. 直播吧 NBA
+          # ========================================
+          print("\n【7】直播吧 NBA")
+          try:
+              url = 'https://www.zhibo8.cc/nba/team.htm'
+              headers = {
+                  'User-Agent': ua,
+                  'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+              }
+              r = requests.get(url, headers=headers, timeout=10)
+              print(f"状态码: {r.status_code}")
+              
+              if r.status_code == 200:
+                  soup = BeautifulSoup(r.text, 'html.parser')
+                  print(f"✅ 成功获取页面")
+                  
+                  # 查找包含球队信息的元素
+                  teams = soup.find_all(text=lambda t: t and any(name in t for name in ['湖人', '勇士', '骑士', '凯尔特人']))
+                  print(f"找到球队关键词数: {len(teams)}")
+                  
+                  if teams:
+                      print("\n找到的球队:")
+                      for team in teams[:5]:
+                          print(f"  - {team.strip()[:50]}")
+              else:
+                  print(f"❌ 请求失败")
+          except Exception as e:
+              print(f"❌ 异常: {e}")
+
+          # ========================================
+          # 8. 懂球帝 NBA
+          # ========================================
+          print("\n【8】懂球帝 NBA")
+          try:
+              url = 'https://www.dongqiudi.com/data/nba/team'
+              headers = {
+                  'User-Agent': ua,
+                  'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+              }
+              r = requests.get(url, headers=headers, timeout=10)
+              print(f"状态码: {r.status_code}")
+              
+              if r.status_code == 200:
+                  print(f"✅ 成功获取页面")
+                  print(f"页面长度: {len(r.text)}")
+                  
+                  # 检查是否包含球队信息
+                  keywords = ['湖人', '勇士', '骑士', 'Lakers', 'Warriors', 'Cavaliers']
+                  hits = sum(1 for kw in keywords if kw in r.text)
+                  print(f"关键词命中数: {hits}/{len(keywords)}")
+              else:
+                  print(f"❌ 请求失败")
+          except Exception as e:
+              print(f"❌ 异常: {e}")
+
+          print("\n" + "=" * 80)
+          print("测试完成")
+          print("=" * 80)
           EOF
