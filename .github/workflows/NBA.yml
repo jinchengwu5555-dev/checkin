@@ -1,10 +1,12 @@
-name: Test NBA Push
+name: NBA Daily Push
 
 on:
+  schedule:
+    - cron: '0 0 * * *'  # 每天北京时间早8点
   workflow_dispatch:
 
 jobs:
-  test:
+  push:
     runs-on: ubuntu-latest
 
     steps:
@@ -21,15 +23,18 @@ jobs:
           SERVERCHAN_KEY: ${{ secrets.SERVERCHAN_KEY }}
         run: |
           python3 - << 'EOF'
-          import requests, os, json
+          import requests, os, re
           from datetime import datetime, timezone, timedelta
+          from bs4 import BeautifulSoup
 
           cst = timezone(timedelta(hours=8))
           now = datetime.now(cst).strftime('%Y-%m-%d %H:%M')
 
           headers = {
-              'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-              'Accept': 'application/json',
+              'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+              'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+              'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.8',
+              'Referer': 'https://www.hupu.com/',
           }
 
           def et_to_cst(utc_str):
@@ -39,146 +44,125 @@ jobs:
               except:
                   return ''
 
+          def get_standings_from_hupu():
+              """
+              从虎扑获取NBA积分榜
+              """
+              # 虎扑NBA积分榜页面
+              HUPU_TO_NBA_ID = {
+                  '骑士': '1610612739', '凯尔特人': '1610612738', '尼克斯': '1610612752',
+                  '魔术': '1610612753', '雄鹿': '1610612749', '步行者': '1610612754',
+                  '热火': '1610612748', '篮网': '1610612751', '76人': '1610612755',
+                  '公牛': '1610612741', '老鹰': '1610612737', '黄蜂': '1610612766',
+                  '猛龙': '1610612761', '活塞': '1610612765', '奇才': '1610612764',
+                  '雷霆': '1610612760', '勇士': '1610612744', '火箭': '1610612745',
+                  '灰熊': '1610612763', '湖人': '1610612747', '森林狼': '1610612750',
+                  '掘金': '1610612743', '快船': '1610612746', '独行侠': '1610612742',
+                  '国王': '1610612758', '太阳': '1610612756', '马刺': '1610612759',
+                  '开拓者': '1610612757', '爵士': '1610612762', '鹈鹕': '1610612740',
+              }
+              
+              try:
+                  # 尝试虎扑NBA数据接口
+                  url = 'https://nba.hupu.com/stats/teams'
+                  print(f"正在访问虎扑: {url}")
+                  r = requests.get(url, headers=headers, timeout=15)
+                  print(f"虎扑响应状态码: {r.status_code}")
+                  
+                  if r.status_code == 200:
+                      soup = BeautifulSoup(r.text, 'html.parser')
+                      ranking = {}
+                      
+                      # 查找积分榜表格
+                      tables = soup.find_all('table', class_='players_table')
+                      
+                      if not tables:
+                          # 尝试其他可能的class
+                          tables = soup.find_all('table')
+                      
+                      print(f"找到 {len(tables)} 个表格")
+                      
+                      for table in tables:
+                          rows = table.find_all('tr')
+                          for row in rows[1:]:  # 跳过表头
+                              cols = row.find_all('td')
+                              if len(cols) >= 2:
+                                  # 尝试提取排名和队名
+                                  rank_text = cols[0].get_text(strip=True)
+                                  team_text = cols[1].get_text(strip=True)
+                                  
+                                  # 提取排名数字
+                                  rank_match = re.search(r'\d+', rank_text)
+                                  if rank_match:
+                                      rank = int(rank_match.group())
+                                      
+                                      # 匹配队名
+                                      for team_name, team_id in HUPU_TO_NBA_ID.items():
+                                          if team_name in team_text:
+                                              ranking[team_id] = rank
+                                              break
+                      
+                      if len(ranking) >= 28:
+                          print(f"✅ 虎扑积分榜加载成功，共 {len(ranking)} 支球队")
+                          sorted_teams = sorted(ranking.items(), key=lambda x: x[1])
+                          for team_id, rank in sorted_teams[:5]:
+                              print(f"  teamId={team_id} rank={rank}")
+                          return ranking
+                      else:
+                          print(f"⚠️ 虎扑数据不完整，只获取到 {len(ranking)} 支球队")
+                  
+              except Exception as e:
+                  print(f"⚠️ 虎扑爬取失败: {e}")
+              
+              # 尝试虎扑API接口
+              try:
+                  api_url = 'https://games.mobileapi.hupu.com/1/7.5.60/nba/getTeamStandings'
+                  api_headers = {
+                      **headers,
+                      'Accept': 'application/json',
+                  }
+                  print(f"尝试虎扑API: {api_url}")
+                  r = requests.get(api_url, headers=api_headers, timeout=10)
+                  print(f"虎扑API状态码: {r.status_code}")
+                  
+                  if r.status_code == 200:
+                      data = r.json()
+                      ranking = {}
+                      
+                      # 解析API返回的数据结构
+                      if 'result' in data:
+                          for conf in data['result'].values():
+                              if isinstance(conf, list):
+                                  for i, team in enumerate(conf, 1):
+                                      team_name = team.get('name', '')
+                                      team_id = HUPU_TO_NBA_ID.get(team_name)
+                                      if team_id:
+                                          ranking[team_id] = i
+                      
+                      if len(ranking) >= 28:
+                          print(f"✅ 虎扑API加载成功，共 {len(ranking)} 支球队")
+                          return ranking
+                      
+              except Exception as e:
+                  print(f"⚠️ 虎扑API失败: {e}")
+              
+              return None
+
           def get_standings():
               """
-              尝试多个数据源获取完整30支球队排名
+              优先虎扑，失败则使用ESPN
               """
-              # 方案1: NBA.com 官方 standings 页面数据
-              try:
-                  url = 'https://cdn.nba.com/static/json/liveData/standings/standings_conference.json'
-                  r = requests.get(url, headers=headers, timeout=10)
-                  print(f"NBA Conference Standings 状态码: {r.status_code}")
-                  
-                  if r.status_code == 200:
-                      data = r.json()
-                      ranking = {}
-                      
-                      # 处理东西部数据
-                      for conf_key in ['east', 'west']:
-                          if conf_key in data:
-                              teams = data[conf_key]
-                              for team in teams:
-                                  team_id = str(team.get('teamId', ''))
-                                  conf_rank = team.get('confRank', 99)
-                                  if team_id and conf_rank != 99:
-                                      ranking[team_id] = conf_rank
-                      
-                      if len(ranking) >= 28:
-                          print(f"✅ NBA官方Conference积分榜加载成功，共 {len(ranking)} 支球队")
-                          sorted_teams = sorted(ranking.items(), key=lambda x: x[1])
-                          for team_id, rank in sorted_teams[:5]:
-                              print(f"  teamId={team_id} rank={rank}")
-                          return ranking
-              except Exception as e:
-                  print(f"⚠️ NBA Conference API失败: {e}")
+              ranking = get_standings_from_hupu()
+              if ranking and len(ranking) >= 28:
+                  return ranking
+              
+              # 降级到ESPN
+              print("降级使用ESPN数据源")
+              return get_standings_espn()
 
-              # 方案2: 尝试 playoffsBracket 数据
-              try:
-                  url = 'https://cdn.nba.com/static/json/liveData/playoffsBracket/playoffsBracket_00.json'
-                  r = requests.get(url, headers=headers, timeout=10)
-                  print(f"NBA Playoffs Bracket 状态码: {r.status_code}")
-                  
-                  if r.status_code == 200:
-                      data = r.json()
-                      ranking = {}
-                      
-                      # 从季后赛数据中提取排名
-                      for series in data.get('series', []):
-                          for team_key in ['topRow', 'bottomRow']:
-                              team = series.get(team_key, {})
-                              team_id = str(team.get('teamId', ''))
-                              seed = team.get('seedNum', 99)
-                              if team_id and seed != 99:
-                                  ranking[team_id] = seed
-                      
-                      if len(ranking) >= 16:
-                          print(f"✅ NBA季后赛种子排名加载成功，共 {len(ranking)} 支球队")
-                          return ranking
-              except Exception as e:
-                  print(f"⚠️ NBA Playoffs Bracket API失败: {e}")
-
-              # 方案3: 使用 balldontlie API (免费，无需key)
-              try:
-                  url = 'https://api.balldontlie.io/v1/standings'
-                  params = {'season': 2024}
-                  r = requests.get(url, headers=headers, params=params, timeout=10)
-                  print(f"BallDontLie API 状态码: {r.status_code}")
-                  
-                  if r.status_code == 200:
-                      data = r.json()
-                      ranking = {}
-                      
-                      # BallDontLie 返回的数据结构
-                      for team in data.get('data', []):
-                          # 需要映射 team abbreviation 到 NBA teamId
-                          pass  # 需要实现映射
-              except Exception as e:
-                  print(f"⚠️ BallDontLie API失败: {e}")
-
-              # 方案4: 使用 sportsdata.io 的免费试用
-              try:
-                  url = 'https://api.sportsdata.io/v3/nba/scores/json/Standings/2025'
-                  # 需要 API key，跳过
-                  pass
-              except:
-                  pass
-
-              # 方案5: 爬取 ESPN 完整页面（包含所有球队）
-              try:
-                  url = 'https://site.api.espn.com/apis/site/v2/sports/basketball/nba/standings'
-                  params = {'season': 2025}
-                  r = requests.get(url, headers=headers, params=params, timeout=10)
-                  print(f"ESPN Full Standings 状态码: {r.status_code}")
-                  
-                  if r.status_code == 200:
-                      data = r.json()
-                      ranking = {}
-                      
-                      ESPN_TO_NBA_ID = {
-                          'ATL': '1610612737', 'BOS': '1610612738', 'BKN': '1610612751',
-                          'CHA': '1610612766', 'CHI': '1610612741', 'CLE': '1610612739',
-                          'DAL': '1610612742', 'DEN': '1610612743', 'DET': '1610612765',
-                          'GSW': '1610612744', 'HOU': '1610612745', 'IND': '1610612754',
-                          'LAC': '1610612746', 'LAL': '1610612747', 'MEM': '1610612763',
-                          'MIA': '1610612748', 'MIL': '1610612749', 'MIN': '1610612750',
-                          'NOP': '1610612740', 'NYK': '1610612752', 'OKC': '1610612760',
-                          'ORL': '1610612753', 'PHI': '1610612755', 'PHX': '1610612756',
-                          'POR': '1610612757', 'SAC': '1610612758', 'SAS': '1610612759',
-                          'TOR': '1610612761', 'UTA': '1610612762', 'WAS': '1610612764',
-                      }
-                      
-                      # 尝试从完整standings中提取
-                      for entry in data.get('standings', {}).get('entries', []):
-                          team = entry.get('team', {})
-                          abbr = team.get('abbreviation', '')
-                          stats = entry.get('stats', [])
-                          
-                          # 查找 conferenceRank
-                          conf_rank = None
-                          for stat in stats:
-                              if stat.get('name') == 'conferenceRank':
-                                  conf_rank = stat.get('value')
-                                  break
-                          
-                          nba_id = ESPN_TO_NBA_ID.get(abbr)
-                          if nba_id and conf_rank:
-                              ranking[nba_id] = int(conf_rank)
-                      
-                      if len(ranking) >= 28:
-                          print(f"✅ ESPN完整积分榜加载成功，共 {len(ranking)} 支球队")
-                          sorted_teams = sorted(ranking.items(), key=lambda x: x[1])
-                          for team_id, rank in sorted_teams[:5]:
-                              print(f"  teamId={team_id} rank={rank}")
-                          return ranking
-              except Exception as e:
-                  print(f"⚠️ ESPN Full Standings失败: {e}")
-
-              # 最后降级方案：ESPN 季后赛球队
-              return get_standings_espn_fallback()
-
-          def get_standings_espn_fallback():
+          def get_standings_espn():
               """
-              降级方案：ESPN 季后赛球队（24支）
+              ESPN 降级方案
               """
               ESPN_TO_NBA_ID = {
                   'ATL': '1610612737', 'BOS': '1610612738', 'BKN': '1610612751',
@@ -195,8 +179,8 @@ jobs:
               try:
                   url = 'https://site.web.api.espn.com/apis/v2/sports/basketball/nba/standings'
                   params = {'season': 2025, 'seasontype': 2}
-                  r = requests.get(url, headers=headers, params=params, timeout=10)
-                  print(f"ESPN积分榜状态码(降级): {r.status_code}")
+                  r = requests.get(url, headers={'User-Agent': headers['User-Agent']}, params=params, timeout=10)
+                  print(f"ESPN积分榜状态码: {r.status_code}")
                   
                   data = r.json()
                   ranking = {}
@@ -210,11 +194,11 @@ jobs:
                               ranking[nba_id] = i
                   
                   if ranking:
-                      print(f"⚠️ 降级方案：ESPN积分榜加载成功，共 {len(ranking)} 支球队（仅季后赛球队）")
+                      print(f"✅ ESPN积分榜加载成功，共 {len(ranking)} 支球队")
                       return ranking
                   return None
               except Exception as e:
-                  print(f"❌ 所有数据源均失败: {e}")
+                  print(f"❌ ESPN失败: {e}")
                   return None
 
           def calc_hot_games(games, ranking):
@@ -246,7 +230,7 @@ jobs:
           # ── 获取今日赛程 ──
           r = requests.get(
               'https://cdn.nba.com/static/json/liveData/scoreboard/todaysScoreboard_00.json',
-              headers=headers, timeout=10
+              headers={'User-Agent': headers['User-Agent']}, timeout=10
           )
           data = r.json()
           games = data.get('scoreboard', {}).get('games', [])
