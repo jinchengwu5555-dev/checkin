@@ -1,4 +1,4 @@
-name: Test NBA Ranking Sources
+name: Test NBA.com JSON Extraction
 
 on:
   workflow_dispatch:
@@ -14,24 +14,19 @@ jobs:
           python-version: '3.11'
 
       - name: Install dependencies
-        run: pip install requests beautifulsoup4 --break-system-packages
+        run: pip install requests --break-system-packages
 
-      - name: Test Multiple Sources
+      - name: Extract NBA.com Standings
         run: |
           python3 - << 'EOF'
           import requests, json, re
-          from bs4 import BeautifulSoup
 
           ua = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
 
           print("=" * 80)
-          print("测试多个 NBA 排名数据源")
+          print("从 NBA.com 提取积分榜数据")
           print("=" * 80)
 
-          # ========================================
-          # 1. NBA.com 官方积分榜页面（爬取）
-          # ========================================
-          print("\n【1】NBA.com 官方积分榜页面")
           try:
               url = 'https://www.nba.com/standings'
               headers = {
@@ -39,112 +34,83 @@ jobs:
                   'Accept': 'text/html,application/xhtml+xml,application/xml',
               }
               r = requests.get(url, headers=headers, timeout=15)
-              print(f"状态码: {r.status_code}")
               
-              if r.status_code == 200:
-                  # 查找 JSON 数据
-                  if 'window.__INITIAL_STATE__' in r.text or '__NEXT_DATA__' in r.text:
-                      print("✅ 页面包含 JSON 数据")
-                      # 尝试提取 JSON
-                      match = re.search(r'<script id="__NEXT_DATA__" type="application/json">(.*?)</script>', r.text, re.DOTALL)
-                      if match:
-                          data = json.loads(match.group(1))
-                          print(f"✅ 成功解析 JSON，数据键: {list(data.keys())[:5]}")
-                  else:
-                      print("⚠️ 未找到 JSON 数据")
-          except Exception as e:
-              print(f"❌ 失败: {e}")
-
-          # ========================================
-          # 2. Basketball Reference
-          # ========================================
-          print("\n【2】Basketball Reference")
-          try:
-              url = 'https://www.basketball-reference.com/leagues/NBA_2025_standings.html'
-              headers = {'User-Agent': ua}
-              r = requests.get(url, headers=headers, timeout=15)
-              print(f"状态码: {r.status_code}")
+              # 提取 __NEXT_DATA__ JSON
+              match = re.search(r'<script id="__NEXT_DATA__" type="application/json">(.*?)</script>', r.text, re.DOTALL)
               
-              if r.status_code == 200:
-                  soup = BeautifulSoup(r.text, 'html.parser')
-                  tables = soup.find_all('table')
-                  print(f"✅ 找到 {len(tables)} 个表格")
+              if match:
+                  data = json.loads(match.group(1))
+                  print("✅ 成功提取 JSON 数据\n")
                   
-                  if tables:
-                      rows = tables[0].find_all('tr')[:5]
-                      print("\n前5行数据:")
-                      for row in rows:
-                          cols = row.find_all(['td', 'th'])
-                          text = ' | '.join([col.get_text(strip=True) for col in cols[:4]])
-                          if text:
-                              print(f"  {text}")
+                  # 探索数据结构
+                  props = data.get('props', {})
+                  page_props = props.get('pageProps', {})
+                  
+                  print("Props 键:", list(props.keys())[:10])
+                  print("PageProps 键:", list(page_props.keys())[:10])
+                  
+                  # 尝试找到 standings 数据
+                  def find_standings(obj, depth=0, max_depth=5):
+                      if depth > max_depth:
+                          return None
+                      
+                      if isinstance(obj, dict):
+                          # 查找包含 standings 的键
+                          for key in obj.keys():
+                              if 'standing' in key.lower():
+                                  print(f"\n找到可能的 standings 键: {key}")
+                                  print(f"数据类型: {type(obj[key])}")
+                                  if isinstance(obj[key], (list, dict)):
+                                      print(f"内容预览: {str(obj[key])[:200]}")
+                                  return obj[key]
+                          
+                          # 递归搜索
+                          for key, value in obj.items():
+                              result = find_standings(value, depth + 1, max_depth)
+                              if result is not None:
+                                  return result
+                      
+                      elif isinstance(obj, list) and obj:
+                          return find_standings(obj[0], depth + 1, max_depth)
+                      
+                      return None
+                  
+                  standings_data = find_standings(data)
+                  
+                  if standings_data:
+                      print("\n✅ 找到 standings 数据!")
+                      
+                      # 尝试解析球队信息
+                      if isinstance(standings_data, list):
+                          print(f"\nStandings 是列表，长度: {len(standings_data)}")
+                          if standings_data:
+                              print(f"第一项的键: {list(standings_data[0].keys()) if isinstance(standings_data[0], dict) else '不是字典'}")
+                              print(f"第一项内容: {standings_data[0]}")
+                      elif isinstance(standings_data, dict):
+                          print(f"\nStandings 是字典，键: {list(standings_data.keys())[:10]}")
+                  else:
+                      print("\n⚠️ 未找到 standings 数据，尝试其他方法...")
+                      
+                      # 打印所有可能相关的键
+                      def print_all_keys(obj, prefix="", depth=0, max_depth=3):
+                          if depth > max_depth:
+                              return
+                          if isinstance(obj, dict):
+                              for key in obj.keys():
+                                  print(f"{prefix}{key}: {type(obj[key])}")
+                                  if isinstance(obj[key], (dict, list)) and depth < max_depth:
+                                      print_all_keys(obj[key], prefix + "  ", depth + 1, max_depth)
+                      
+                      print("\n所有数据结构:")
+                      print_all_keys(page_props)
+                  
+              else:
+                  print("❌ 未找到 __NEXT_DATA__ JSON")
+                  
           except Exception as e:
               print(f"❌ 失败: {e}")
-
-          # ========================================
-          # 3. ESPN 网页版积分榜
-          # ========================================
-          print("\n【3】ESPN 网页版积分榜")
-          try:
-              url = 'https://www.espn.com/nba/standings'
-              headers = {'User-Agent': ua}
-              r = requests.get(url, headers=headers, timeout=15)
-              print(f"状态码: {r.status_code}")
-              
-              if r.status_code == 200:
-                  # 查找 JSON 数据
-                  if 'window[\'__espnfitt__\']' in r.text:
-                      print("✅ 页面包含 ESPN 数据")
-          except Exception as e:
-              print(f"❌ 失败: {e}")
-
-          # ========================================
-          # 4. RapidAPI - NBA API
-          # ========================================
-          print("\n【4】RapidAPI NBA API (需要 API Key)")
-          print("ℹ️ 这是付费服务，但提供准确数据")
-          print("   URL: https://rapidapi.com/api-sports/api/api-nba")
-
-          # ========================================
-          # 5. The Odds API
-          # ========================================
-          print("\n【5】The Odds API")
-          try:
-              url = 'https://api.the-odds-api.com/v4/sports/basketball_nba/odds'
-              print("ℹ️ 需要 API Key，但有免费额度")
-              print("   URL: https://the-odds-api.com/")
-          except Exception as e:
-              print(f"❌ 失败: {e}")
-
-          # ========================================
-          # 6. SportsData.io
-          # ========================================
-          print("\n【6】SportsData.io")
-          print("ℹ️ 提供免费试用，数据准确")
-          print("   URL: https://sportsdata.io/")
-
-          # ========================================
-          # 7. 直接从 NBA CDN 获取
-          # ========================================
-          print("\n【7】NBA CDN - 尝试不同端点")
-          cdn_urls = [
-              'https://cdn.nba.com/static/json/staticData/standings.json',
-              'https://cdn.nba.com/static/json/liveData/standings/standings_all.json',
-              'https://cdn.nba.com/static/json/liveData/standings/standings_conference.json',
-          ]
-          
-          for cdn_url in cdn_urls:
-              try:
-                  print(f"\n尝试: {cdn_url}")
-                  r = requests.get(cdn_url, headers={'User-Agent': ua}, timeout=10)
-                  print(f"状态码: {r.status_code}")
-                  if r.status_code == 200:
-                      data = r.json()
-                      print(f"✅ 成功，数据键: {list(data.keys())[:5]}")
-              except Exception as e:
-                  print(f"失败: {str(e)[:50]}")
+              import traceback
+              traceback.print_exc()
 
           print("\n" + "=" * 80)
-          print("测试完成")
-          print("=" * 80)
           EOF
