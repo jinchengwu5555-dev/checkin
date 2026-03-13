@@ -1,4 +1,4 @@
-name: NBA Schedule 1
+name: NBA Schedule
 
 on:
   workflow_dispatch:
@@ -33,7 +33,7 @@ jobs:
           cst = timezone(timedelta(hours=8))
           headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'}
 
-          def et_to_cst(utc_str):
+          def utc_to_cst(utc_str):
               try:
                   dt = datetime.fromisoformat(utc_str.replace('Z', '+00:00'))
                   return dt.astimezone(cst).strftime('%H:%M')
@@ -49,26 +49,24 @@ jobs:
           games     = data.get('scoreboard', {}).get('games', [])
           game_date = data.get('scoreboard', {}).get('gameDate', '')
 
-          # ── 从赛程数据中提取所有球队的胜场，构建联盟总排名 ──
-          # wins 字段直接内嵌在每支球队数据里，无需额外接口
-          team_wins = {}  # teamId -> wins
+          # ── 北京日期（NBA的gameDate是美东日期，北京可能已是次日）──
+          cst_date = datetime.now(cst).strftime('%Y-%m-%d')
+
+          # ── 从赛程数据提取胜场，构建今日出赛球队排名 ──
+          team_wins = {}
           for g in games:
               for side in ('awayTeam', 'homeTeam'):
-                  t = g[side]
-                  tid  = str(t.get('teamId', ''))
-                  wins = t.get('wins')
-                  if tid and wins is not None:
-                      team_wins[tid] = int(wins)
+                  t   = g[side]
+                  tid = str(t.get('teamId', ''))
+                  w   = t.get('wins')
+                  if tid and w is not None:
+                      team_wins[tid] = int(w)
 
-          # 按胜场降序排名（胜场相同时排名相同也可接受）
           sorted_teams = sorted(team_wins.items(), key=lambda x: x[1], reverse=True)
-          ranking = {}
-          for rank, (tid, _) in enumerate(sorted_teams, 1):
-              ranking[tid] = rank
-
+          ranking = {tid: rank for rank, (tid, _) in enumerate(sorted_teams, 1)}
           use_rankings = len(ranking) > 0
 
-          # ── 热门判断：两队联盟排名之和最小的前2场 ──
+          # ── 热门判断：胜场排名之和最小的前2场，双强(前8)额外加权 ──
           def calc_hot_games(games, ranking):
               if not ranking:
                   return set(), {}
@@ -81,7 +79,7 @@ jobs:
                   r_home  = ranking.get(home_id, 99)
                   score   = (99 - r_away) + (99 - r_home)
                   if r_away <= 8 and r_home <= 8:
-                      score += 5   # 双强额外加权
+                      score += 5
                   game_id = str(g['gameId'])
                   scored.append((score, game_id))
                   rank_info[game_id] = (r_away, r_home)
@@ -98,20 +96,21 @@ jobs:
               home       = g['homeTeam']
               status     = g.get('gameStatus', 1)
               status_txt = g.get('gameStatusText', '').strip()
-              start_cst  = et_to_cst(g.get('gameTimeUTC', ''))
               game_id    = str(g['gameId'])
               is_hot     = game_id in hot_ids
               r_away, r_home = rank_info.get(game_id, (99, 99))
-              home_rank  = f" #{r_home}" if use_rankings and r_home != 99 else ''
-              away_rank  = f" #{r_away}" if use_rankings and r_away != 99 else ''
+
+              # 开赛时间：UTC转北京
+              start_cst = utc_to_cst(g.get('gameTimeUTC', ''))
+
+              home_rank = f" #{r_home}" if use_rankings and r_home != 99 else ''
+              away_rank = f" #{r_away}" if use_rankings and r_away != 99 else ''
 
               info = {
                   'home':       f"{home['teamCity']} {home['teamName']}",
                   'away':       f"{away['teamCity']} {away['teamName']}",
                   'home_score': home.get('score', 0),
                   'away_score': away.get('score', 0),
-                  'home_wins':  home.get('wins', ''),
-                  'away_wins':  away.get('wins', ''),
                   'status_txt': status_txt,
                   'start_cst':  start_cst,
                   'home_rank':  home_rank,
@@ -126,63 +125,63 @@ jobs:
                   upcoming.append(info)
 
           # ── Markdown 排版 ──
-          sections = [f"**赛事日期:** {game_date}\n"]
+          sections = [f"### 🏀 NBA 赛程\n\n**赛事日期(美东):** {game_date}　　**北京时间:** {cst_date}"]
 
           if ongoing:
-              block = ['### 🔴 进行中\n']
+              block = ['\n#### 🔴 进行中\n']
               block.append('| 主场 | 客场 | 比分 | 节次 |')
               block.append('|:---|:---|:---:|:---:|')
               for g in ongoing:
                   hot = '🔥 ' if g['is_hot'] else ''
                   block.append(
                       f"| {hot}**{g['home']}**{g['home_rank']} "
-                      f"| **{g['away']}**{g['away_rank']} "
-                      f"| {g['home_score']} - {g['away_score']} "
+                      f"| {g['away']}{g['away_rank']} "
+                      f"| {g['home_score']}-{g['away_score']} "
                       f"| {g['status_txt']} |"
                   )
               sections.append('\n'.join(block))
 
           if upcoming:
-              block = ['### 🕐 今日待开赛\n']
-              block.append('| 主场 | 客场 | 开赛时间(北京) |')
+              block = ['\n#### 🕐 今日待开赛\n']
+              block.append('| 主场 | 客场 | 开赛(北京时间) |')
               block.append('|:---|:---|:---:|')
               for g in upcoming:
                   hot  = '🔥 ' if g['is_hot'] else ''
                   time = g['start_cst'] if g['start_cst'] else '-'
                   block.append(
                       f"| {hot}**{g['home']}**{g['home_rank']} "
-                      f"| **{g['away']}**{g['away_rank']} "
+                      f"| {g['away']}{g['away_rank']} "
                       f"| {time} |"
                   )
               sections.append('\n'.join(block))
 
           if finished:
-              block = ['### ✅ 已结束\n']
-              block.append('| 主场 | 客场 | 比分 | 结果 |')
-              block.append('|:---|:---|:---:|:---:|')
+              block = ['\n#### ✅ 已结束\n']
+              block.append('| 主场 | 客场 | 比分 | 胜者 |')
+              block.append('|:---|:---|:---:|:---|')
               for g in finished:
-                  hot      = '🔥 ' if g['is_hot'] else ''
-                  winner   = g['home'] if g['home_score'] > g['away_score'] else g['away']
-                  home_fmt = f"**{g['home']}**" if g['home'] == winner else g['home']
-                  away_fmt = f"**{g['away']}**" if g['away'] == winner else g['away']
+                  hot    = '🔥 ' if g['is_hot'] else ''
+                  h_win  = g['home_score'] > g['away_score']
+                  home_f = f"**{g['home']}**" if h_win  else g['home']
+                  away_f = f"**{g['away']}**" if not h_win else g['away']
+                  winner = g['home'] if h_win else g['away']
                   block.append(
-                      f"| {hot}{home_fmt}{g['home_rank']} "
-                      f"| {away_fmt}{g['away_rank']} "
-                      f"| {g['home_score']} - {g['away_score']} "
+                      f"| {hot}{home_f}{g['home_rank']} "
+                      f"| {away_f}{g['away_rank']} "
+                      f"| {g['home_score']}-{g['away_score']} "
                       f"| 🏆 **{winner}** |"
                   )
               sections.append('\n'.join(block))
 
           if not games:
-              sections.append('今日暂无比赛')
+              sections.append('\n今日暂无比赛')
 
-          # 排名说明
           if use_rankings:
-              sections.append(f'> 🔥 热门: 联盟总排名（按胜场）之和最小的前2场，双强（前8）对决额外加权\n> 📊 排名基于今日出赛 {len(ranking)} 支球队的胜场数据')
+              sections.append(f'\n> 🔥 热门: 按今日出赛 {len(ranking)} 支球队胜场排名计算，前8强对决额外加权')
           else:
-              sections.append('> ⚠️ 今日无比赛数据，无法计算排名')
+              sections.append('\n> ⚠️ 今日无比赛，无法计算排名')
 
-          result = '\n\n'.join(sections)
+          result = '\n'.join(sections)
           print(result)
 
           with open(os.environ['GITHUB_OUTPUT'], 'a') as f:
