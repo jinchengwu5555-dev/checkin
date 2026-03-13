@@ -1,6 +1,3 @@
-看日志，`✅✅✅✅✅` 是 dailycheckin 输出的，但没有积分信息，说明签到逻辑跑了但没拿到真实结果。需要看 dailycheckin 的完整原始输出。把 `baidu-checkin.yml` 里的判断逻辑改一下，先打印完整 output 再说：
-
-```yaml
 name: Baidu Netdisk Checkin
 
 on:
@@ -66,6 +63,3 @@ jobs:
           for i, line in enumerate(output.splitlines()):
               print(f"[{i}] {line}")
           EOF
-```
-
-跑完把日志贴给我，看看 dailycheckin 实际返回了什么，再针对性地提取积分信息。
