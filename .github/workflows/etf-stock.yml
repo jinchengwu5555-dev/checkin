@@ -50,21 +50,28 @@ jobs:
                   r.encoding = 'gbk'
                   data_str = r.text.split('"')[1]
                   if not data_str: return None
-                  f = data_str.split(',')
-                  prev_close = float(f[2])
-                  current    = float(f[3])
+                  f          = data_str.split(',')
+                  prev_close = float(f[2])   # 昨收
+                  current    = float(f[3])   # 当前价（交易中）
+                  # 开盘前/休市时 current=0，依次 fallback：买一[6] → 昨收
+                  if current == 0:
+                      bid = float(f[6]) if len(f) > 6 else 0
+                      current = bid if bid > 0 else prev_close
+                  if prev_close == 0: return None
                   return {
                       'current':    current,
                       'change_pct': (current - prev_close) / prev_close * 100,
                   }
-              except: return None
+              except:
+                  return None
 
           def get_history_high(yahoo_symbol):
               try:
                   hist = yf.Ticker(yahoo_symbol).history(period='max')
                   if hist.empty: return None
                   return hist['High'].max()
-              except: return None
+              except:
+                  return None
 
           now = datetime.now(timezone(timedelta(hours=8))).strftime('%Y-%m-%d %H:%M')
           lines = [f'### 📊 ETF 行情  {now}\n']
