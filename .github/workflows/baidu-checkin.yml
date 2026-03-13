@@ -15,13 +15,16 @@ jobs:
       result: ${{ steps.checkin.outputs.result }}
 
     steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
       - name: Setup Python
         uses: actions/setup-python@v5
         with:
           python-version: '3.11'
 
       - name: Install dependencies
-        run: pip install requests --break-system-packages
+        run: pip install requests dailycheckin --break-system-packages
 
       - name: Baidu Checkin
         id: checkin
@@ -29,63 +32,48 @@ jobs:
           BAIDUWP_COOKIE: ${{ secrets.BAIDUWP_COOKIE }}
         run: |
           python3 - << 'EOF'
-          import os, requests, sys
+          import os, json, subprocess, sys
 
           cookie = os.environ.get('BAIDUWP_COOKIE', '')
           if not cookie:
-              result = "☁️ 百度网盘\n❌ 签到失败: 未设置 BAIDUWP_COOKIE"
+              result = "☁️ 百度网盘\n❌ 未设置 BAIDUWP_COOKIE"
               print(result)
               with open(os.environ['GITHUB_OUTPUT'], 'a') as f:
                   f.write(f"result<<ENDBAIDU\n{result}\nENDBAIDU\n")
               sys.exit(0)
 
-          headers = {
-              'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-              'Cookie': cookie,
-              'Referer': 'https://pan.baidu.com/disk/main',
-          }
-
-          lines = ['☁️ 百度网盘']
-
           try:
-              # 执行签到
-              sign_url = 'https://pan.baidu.com/rest/2.0/membership/user?method=signin'
-              r = requests.post(sign_url, headers=headers, timeout=15)
-              data = r.json()
-              errno = data.get('errno', -1)
+              with open('config.json', 'r') as f:
+                  config = json.load(f)
+              config['BAIDUWP'][0]['cookie'] = cookie
+              with open('config.json', 'w') as f:
+                  json.dump(config, f)
+          except Exception:
+              config = {"BAIDUWP": [{"cookie": cookie}]}
+              with open('config.json', 'w') as f:
+                  json.dump(config, f)
 
-              if errno == 0:
-                  # 签到成功，获取积分信息
-                  sign_data = data.get('data', {}).get('sign_point', {})
-                  today_point = sign_data.get('sign_point', '')
-                  total_point = sign_data.get('total_point', '')
-                  cont_days   = sign_data.get('cont_sign_num', '')
-                  lines.append('✅ 签到成功')
-                  if today_point: lines.append(f'🎁 今日获得: {today_point} 积分')
-                  if total_point: lines.append(f'💰 累计积分: {total_point}')
-                  if cont_days:   lines.append(f'📅 连续签到: {cont_days} 天')
+          proc = subprocess.run(['dailycheckin'], capture_output=True, text=True)
+          output = proc.stdout + proc.stderr
 
-              elif errno == 9019:
-                  # 今日已签到，查询积分
-                  lines.append('ℹ️ 今日已签到')
-                  query_url = 'https://pan.baidu.com/rest/2.0/membership/user?method=query'
-                  r2 = requests.get(query_url, headers=headers, timeout=15)
-                  d2 = r2.json()
-                  if d2.get('errno') == 0:
-                      info = d2.get('data', {})
-                      total_point = info.get('total_point', '')
-                      cont_days   = info.get('cont_sign_num', '')
-                      if total_point: lines.append(f'💰 累计积分: {total_point}')
-                      if cont_days:   lines.append(f'📅 连续签到: {cont_days} 天')
+          # ✅✅✅✅✅ = 5项任务全部成功
+          check_line = ''
+          for line in output.splitlines():
+              if '第 1 个账号' in line:
+                  check_line = line.strip()
+                  break
 
-              else:
-                  lines.append(f'❌ 签到失败: errno={errno}')
-                  lines.append(f'返回内容: {data}')
+          success_count = check_line.count('✅') if check_line else 0
+          fail_count    = check_line.count('❌') if check_line else 0
 
-          except Exception as e:
-              lines.append(f'❌ 异常: {e}')
+          if success_count > 0:
+              status = f'✅ 签到成功（{success_count} 项任务完成）'
+          elif fail_count > 0:
+              status = f'⚠️ 部分失败（✅{success_count} ❌{fail_count}）'
+          else:
+              status = '❌ 签到失败'
 
-          result = '\n'.join(lines)
+          result = f'☁️ 百度网盘\n{status}'
           print(result)
           with open(os.environ['GITHUB_OUTPUT'], 'a') as f:
               f.write(f"result<<ENDBAIDU\n{result}\nENDBAIDU\n")
