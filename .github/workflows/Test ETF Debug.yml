@@ -1,0 +1,40 @@
+name: Test ETF Debug
+
+on:
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install dependencies
+        run: pip install requests --break-system-packages
+      - name: Debug
+        run: |
+          python3 - << 'EOF'
+          import requests
+
+          headers = {
+              'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+              'Referer': 'https://finance.sina.com.cn'
+          }
+
+          r = requests.get('https://hq.sinajs.cn/list=sh510500', headers=headers, timeout=10)
+          r.encoding = 'gbk'
+          print("原始返回:")
+          print(repr(r.text))
+          print()
+
+          try:
+              data_str = r.text.split('"')[1]
+              fields = data_str.split(',')
+              print(f"共 {len(fields)} 个字段:")
+              for i, f in enumerate(fields):
+                  print(f"  [{i}] {f}")
+          except Exception as e:
+              print(f"解析失败: {e}")
+          EOF
