@@ -15,16 +15,13 @@ jobs:
       result: ${{ steps.checkin.outputs.result }}
 
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
       - name: Setup Python
         uses: actions/setup-python@v5
         with:
           python-version: '3.11'
 
       - name: Install dependencies
-        run: pip install requests dailycheckin --break-system-packages
+        run: pip install requests --break-system-packages
 
       - name: Baidu Checkin
         id: checkin
@@ -32,7 +29,7 @@ jobs:
           BAIDUWP_COOKIE: ${{ secrets.BAIDUWP_COOKIE }}
         run: |
           python3 - << 'EOF'
-          import os, json, subprocess, sys
+          import os, requests, sys
 
           cookie = os.environ.get('BAIDUWP_COOKIE', '')
           if not cookie:
@@ -42,24 +39,54 @@ jobs:
                   f.write(f"result<<ENDBAIDU\n{result}\nENDBAIDU\n")
               sys.exit(0)
 
+          headers = {
+              'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+              'Cookie': cookie,
+              'Referer': 'https://pan.baidu.com/disk/main',
+          }
+
+          lines = ['☁️ 百度网盘']
+
           try:
-              with open('config.json', 'r') as f:
-                  config = json.load(f)
-              config['BAIDUWP'][0]['cookie'] = cookie
-              with open('config.json', 'w') as f:
-                  json.dump(config, f)
-          except Exception:
-              config = {"BAIDUWP": [{"cookie": cookie}]}
-              with open('config.json', 'w') as f:
-                  json.dump(config, f)
+              # 执行签到
+              sign_url = 'https://pan.baidu.com/rest/2.0/membership/user?method=signin'
+              r = requests.post(sign_url, headers=headers, timeout=15)
+              data = r.json()
+              errno = data.get('errno', -1)
 
-          proc = subprocess.run(['dailycheckin'], capture_output=True, text=True)
-          output = proc.stdout + proc.stderr
+              if errno == 0:
+                  # 签到成功，获取积分信息
+                  sign_data = data.get('data', {}).get('sign_point', {})
+                  today_point = sign_data.get('sign_point', '')
+                  total_point = sign_data.get('total_point', '')
+                  cont_days   = sign_data.get('cont_sign_num', '')
+                  lines.append('✅ 签到成功')
+                  if today_point: lines.append(f'🎁 今日获得: {today_point} 积分')
+                  if total_point: lines.append(f'💰 累计积分: {total_point}')
+                  if cont_days:   lines.append(f'📅 连续签到: {cont_days} 天')
 
-          # 打印完整原始输出，方便调试
-          print("=== 完整原始输出 ===")
-          print(repr(output))
-          print("=== 逐行输出 ===")
-          for i, line in enumerate(output.splitlines()):
-              print(f"[{i}] {line}")
+              elif errno == 9019:
+                  # 今日已签到，查询积分
+                  lines.append('ℹ️ 今日已签到')
+                  query_url = 'https://pan.baidu.com/rest/2.0/membership/user?method=query'
+                  r2 = requests.get(query_url, headers=headers, timeout=15)
+                  d2 = r2.json()
+                  if d2.get('errno') == 0:
+                      info = d2.get('data', {})
+                      total_point = info.get('total_point', '')
+                      cont_days   = info.get('cont_sign_num', '')
+                      if total_point: lines.append(f'💰 累计积分: {total_point}')
+                      if cont_days:   lines.append(f'📅 连续签到: {cont_days} 天')
+
+              else:
+                  lines.append(f'❌ 签到失败: errno={errno}')
+                  lines.append(f'返回内容: {data}')
+
+          except Exception as e:
+              lines.append(f'❌ 异常: {e}')
+
+          result = '\n'.join(lines)
+          print(result)
+          with open(os.environ['GITHUB_OUTPUT'], 'a') as f:
+              f.write(f"result<<ENDBAIDU\n{result}\nENDBAIDU\n")
           EOF
