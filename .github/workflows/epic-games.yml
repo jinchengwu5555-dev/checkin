@@ -13,7 +13,7 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       result: ${{ steps.fetch.outputs.result }}
-    
+
     steps:
       - name: Setup Python
         uses: actions/setup-python@v5
@@ -28,9 +28,10 @@ jobs:
         run: |
           python3 - << 'EOF'
           import requests, os
-          from datetime import datetime, timezone
+          from datetime import datetime, timezone, timedelta
 
-          lines = ['🎮 Epic 本周免费游戏']
+          cst = timezone(timedelta(hours=8))
+          lines = ['### 🎮 Epic 本周免费游戏']
 
           try:
               url = 'https://store-site-backend-static.ak.epicgames.com/freeGamesPromotions?locale=zh-CN&country=CN&allowCountries=CN'
@@ -52,25 +53,31 @@ jobs:
                               free_next.append({'title': title, 'start': detail.get('startDate', '')})
 
               if free_now:
-                  lines.append('本周免费:')
+                  lines.append('\n**本周免费:**')
                   for g in free_now:
                       try:
-                          end_str = datetime.fromisoformat(g['end'].replace('Z', '+00:00')).strftime('%m月%d日')
-                      except: end_str = ''
-                      lines.append(f"  🆓 {g['title']}" + (f"（至 {end_str}）" if end_str else ''))
+                          end_dt  = datetime.fromisoformat(g['end'].replace('Z', '+00:00')).astimezone(cst)
+                          end_str = end_dt.strftime('%m月%d日 %H:%M')
+                      except:
+                          end_str = ''
+                      suffix = f"（至 {end_str}）" if end_str else ''
+                      lines.append(f"- 🆓 **{g['title']}** {suffix}")
               else:
-                  lines.append('本周暂无免费游戏')
+                  lines.append('\n本周暂无免费游戏')
 
               if free_next:
-                  lines.append('下周免费预告:')
+                  lines.append('\n**下周免费预告:**')
                   for g in free_next:
                       try:
-                          start_str = datetime.fromisoformat(g['start'].replace('Z', '+00:00')).strftime('%m月%d日')
-                      except: start_str = ''
-                      lines.append(f"  🔜 {g['title']}" + (f"（{start_str} 开始）" if start_str else ''))
+                          start_dt  = datetime.fromisoformat(g['start'].replace('Z', '+00:00')).astimezone(cst)
+                          start_str = start_dt.strftime('%m月%d日 %H:%M')
+                      except:
+                          start_str = ''
+                      suffix = f"（{start_str} 开始）" if start_str else ''
+                      lines.append(f"- 🔜 **{g['title']}** {suffix}")
 
           except Exception as e:
-              lines.append(f"⚠️ 获取失败: {e}")
+              lines.append(f"\n⚠️ 获取失败: {e}")
 
           result = '\n'.join(lines)
           print(result)
