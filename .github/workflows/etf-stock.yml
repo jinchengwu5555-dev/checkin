@@ -13,7 +13,7 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       result: ${{ steps.fetch.outputs.result }}
-    
+
     steps:
       - name: Setup Python
         uses: actions/setup-python@v5
@@ -66,34 +66,10 @@ jobs:
                   return hist['High'].max()
               except: return None
 
-          def dw(s):
-              return sum(2 if ord(c) > 127 else 1 for c in str(s))
-
-          def pad(s, width):
-              s = str(s)
-              p = width - dw(s)
-              l = p // 2
-              return ' ' * l + s + ' ' * (p - l)
-
-          cols = [
-              ('ETF名称',    12),
-              ('现价',        8),
-              ('较前日',     10),
-              ('历史最高',   10),
-              ('现价/最高',  10),
-          ]
-
-          def sep(l, m, r):
-              return l + m.join('─' * w for _, w in cols) + r
-
-          def row(cells):
-              return '│' + '│'.join(pad(c, w) for c, (_, w) in zip(cells, cols)) + '│'
-
           now = datetime.now(timezone(timedelta(hours=8))).strftime('%Y-%m-%d %H:%M')
-          lines = [f'📊 ETF 行情  {now}']
-          lines.append(sep('┌', '┬', '┐'))
-          lines.append(row([n for n, _ in cols]))
-          lines.append(sep('├', '┼', '┤'))
+          lines = [f'### 📊 ETF 行情  {now}\n']
+          lines.append('| ETF | 现价 | 较前日 | 历史最高 | 现价/最高 |')
+          lines.append('|:---|:---:|:---:|:---:|:---:|')
 
           for code, label, yahoo in ETFS:
               d    = get_realtime(code)
@@ -105,11 +81,9 @@ jobs:
                   pct   = f"{arrow}{sign}{d['change_pct']:.2f}%"
                   h_str = f"{high:.3f}" if high else 'N/A'
                   ratio = f"{d['current']/high*100:.1f}%" if high else 'N/A'
-                  lines.append(row([label, cur, pct, h_str, ratio]))
+                  lines.append(f"| {label} | {cur} | {pct} | {h_str} | {ratio} |")
               else:
-                  lines.append(row([label, 'N/A', 'N/A', 'N/A', 'N/A']))
-
-          lines.append(sep('└', '┴', '┘'))
+                  lines.append(f"| {label} | N/A | N/A | N/A | N/A |")
 
           result = '\n'.join(lines)
           print(result)
