@@ -7,6 +7,9 @@ jobs:
   test:
     runs-on: ubuntu-latest
     steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
       - name: Setup Python
         uses: actions/setup-python@v5
         with:
@@ -30,20 +33,28 @@ jobs:
               print("❌ 未设置 CLOUD189_USERNAME 或 CLOUD189_PASSWORD")
               exit(0)
 
-          # dailycheckin 的天翼云盘配置格式
-          config = {
-              "CLOUD189": [
-                  {
-                      "username": username,
-                      "password": password
-                  }
-              ]
-          }
+          # 写到 dailycheckin 能找到的路径
+          config_path = os.path.join(os.getcwd(), 'config.json')
 
-          with open('config.json', 'w') as f:
-              json.dump(config, f)
+          # 读取现有 config.json（如果有），否则新建
+          try:
+              with open(config_path, 'r') as f:
+                  config = json.load(f)
+          except Exception:
+              config = {}
 
-          print("config.json 已生成，开始执行签到...")
+          config['CLOUD189'] = [
+              {
+                  "username": username,
+                  "password": password
+              }
+          ]
+
+          with open(config_path, 'w') as f:
+              json.dump(config, f, indent=2)
+
+          print(f"config.json 写入路径: {config_path}")
+          print(f"config.json 内容（密码已隐藏）: CLOUD189 账号 = {username[:3]}***")
 
           proc = subprocess.run(['dailycheckin'], capture_output=True, text=True)
           output = proc.stdout + proc.stderr
