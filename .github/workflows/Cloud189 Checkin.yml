@@ -1,0 +1,53 @@
+name: Test Cloud189 Checkin
+
+on:
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: pip install requests dailycheckin --break-system-packages
+
+      - name: Test Cloud189
+        env:
+          CLOUD189_USERNAME: ${{ secrets.CLOUD189_USERNAME }}
+          CLOUD189_PASSWORD: ${{ secrets.CLOUD189_PASSWORD }}
+        run: |
+          python3 - << 'EOF'
+          import os, json, subprocess
+
+          username = os.environ.get('CLOUD189_USERNAME', '')
+          password = os.environ.get('CLOUD189_PASSWORD', '')
+
+          if not username or not password:
+              print("❌ 未设置 CLOUD189_USERNAME 或 CLOUD189_PASSWORD")
+              exit(0)
+
+          # dailycheckin 的天翼云盘配置格式
+          config = {
+              "CLOUD189": [
+                  {
+                      "username": username,
+                      "password": password
+                  }
+              ]
+          }
+
+          with open('config.json', 'w') as f:
+              json.dump(config, f)
+
+          print("config.json 已生成，开始执行签到...")
+
+          proc = subprocess.run(['dailycheckin'], capture_output=True, text=True)
+          output = proc.stdout + proc.stderr
+
+          print("=== 完整输出 ===")
+          print(output)
+          EOF
