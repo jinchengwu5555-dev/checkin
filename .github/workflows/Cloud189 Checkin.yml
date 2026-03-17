@@ -1,19 +1,11 @@
-name: Cloud189 Checkin
+name: Test Cloud189 Debug
 
 on:
   workflow_dispatch:
-  workflow_call:
-    outputs:
-      result:
-        description: "天翼云盘签到"
-        value: ${{ jobs.checkin.outputs.result }}
 
 jobs:
-  checkin:
+  test:
     runs-on: ubuntu-latest
-    outputs:
-      result: ${{ steps.checkin.outputs.result }}
-
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -26,26 +18,17 @@ jobs:
       - name: Install dependencies
         run: pip install requests dailycheckin --break-system-packages
 
-      - name: Cloud189 Checkin
-        id: checkin
+      - name: Debug
         env:
           CLOUD189_USERNAME: ${{ secrets.CLOUD189_USERNAME }}
           CLOUD189_PASSWORD: ${{ secrets.CLOUD189_PASSWORD }}
         run: |
           python3 - << 'EOF'
-          import os, json, subprocess, sys
+          import os, json, subprocess
 
           username = os.environ.get('CLOUD189_USERNAME', '')
           password = os.environ.get('CLOUD189_PASSWORD', '')
 
-          if not username or not password:
-              result = "☁️ 天翼云盘\n❌ 未设置 CLOUD189_USERNAME 或 CLOUD189_PASSWORD"
-              print(result)
-              with open(os.environ['GITHUB_OUTPUT'], 'a') as f:
-                  f.write(f"result<<ENDCLOUD\n{result}\nENDCLOUD\n")
-              sys.exit(0)
-
-          # 读取 config.json 并替换占位符
           config_path = os.path.join(os.getcwd(), 'config.json')
           with open(config_path, 'r') as f:
               config = json.load(f)
@@ -53,42 +36,16 @@ jobs:
           config['CLOUD189'][0]['username'] = username
           config['CLOUD189'][0]['password'] = password
 
+          # 只跑 CLOUD189
           with open(config_path, 'w') as f:
-              json.dump(config, f, indent=2)
-
-          # 只保留 CLOUD189，避免触发百度网盘
-          config_cloud_only = {"CLOUD189": config['CLOUD189']}
-          with open(config_path, 'w') as f:
-              json.dump(config_cloud_only, f, indent=2)
+              json.dump({"CLOUD189": config['CLOUD189']}, f, indent=2)
 
           proc = subprocess.run(['dailycheckin'], capture_output=True, text=True)
           output = proc.stdout + proc.stderr
 
-          # 提取有效行
-          keep = []
-          for line in output.splitlines():
-              line = line.strip()
-              if not line: continue
-              if any(x in line for x in ['当前时间', '当前版本', '使用配置', '本次执行', '账号数', '开始执行', '---']): continue
-              keep.append(line)
-
-          check_line = next((l for l in keep if '第 1 个账号' in l), '')
-          success_count = check_line.count('✅') if check_line else 0
-          fail_count    = check_line.count('❌') if check_line else 0
-
-          if success_count > 0 and fail_count == 0:
-              status = '✅ 签到成功'
-          elif success_count > 0:
-              status = f'⚠️ 部分成功（✅{success_count} ❌{fail_count}）'
-          else:
-              status = '❌ 签到失败'
-              # 附上错误信息
-              for line in keep:
-                  if '第 1 个账号' not in line and line not in status:
-                      status += f'\n{line}'
-
-          result = f'☁️ 天翼云盘\n{status}'
-          print(result)
-          with open(os.environ['GITHUB_OUTPUT'], 'a') as f:
-              f.write(f"result<<ENDCLOUD\n{result}\nENDCLOUD\n")
+          print("=== 完整原始输出 ===")
+          print(repr(output))
+          print("=== 逐行 ===")
+          for i, line in enumerate(output.splitlines()):
+              print(f"[{i}] {line}")
           EOF
