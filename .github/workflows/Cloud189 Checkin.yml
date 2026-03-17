@@ -1,4 +1,4 @@
-name: Test Cloud189 Debug
+name: Test Cloud189 Key
 
 on:
   workflow_dispatch:
@@ -7,45 +7,31 @@ jobs:
   test:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
       - name: Setup Python
         uses: actions/setup-python@v5
         with:
           python-version: '3.11'
-
       - name: Install dependencies
-        run: pip install requests dailycheckin --break-system-packages
-
-      - name: Debug
-        env:
-          CLOUD189_USERNAME: ${{ secrets.CLOUD189_USERNAME }}
-          CLOUD189_PASSWORD: ${{ secrets.CLOUD189_PASSWORD }}
+        run: pip install dailycheckin --break-system-packages
+      - name: Find key
         run: |
           python3 - << 'EOF'
-          import os, json, subprocess
+          import dailycheckin, os, inspect
 
-          username = os.environ.get('CLOUD189_USERNAME', '')
-          password = os.environ.get('CLOUD189_PASSWORD', '')
+          # 打印 dailycheckin 包的位置
+          pkg_path = os.path.dirname(inspect.getfile(dailycheckin))
+          print(f"包路径: {pkg_path}")
 
-          config_path = os.path.join(os.getcwd(), 'config.json')
-          with open(config_path, 'r') as f:
-              config = json.load(f)
-
-          config['CLOUD189'][0]['username'] = username
-          config['CLOUD189'][0]['password'] = password
-
-          # 只跑 CLOUD189
-          with open(config_path, 'w') as f:
-              json.dump({"CLOUD189": config['CLOUD189']}, f, indent=2)
-
-          proc = subprocess.run(['dailycheckin'], capture_output=True, text=True)
-          output = proc.stdout + proc.stderr
-
-          print("=== 完整原始输出 ===")
-          print(repr(output))
-          print("=== 逐行 ===")
-          for i, line in enumerate(output.splitlines()):
-              print(f"[{i}] {line}")
+          # 列出所有文件
+          for root, dirs, files in os.walk(pkg_path):
+              for f in files:
+                  print(os.path.join(root, f))
           EOF
+
+      - name: Cat checkin files
+        run: |
+          # 找天翼相关文件
+          find /opt/hostedtoolcache -name "*.py" 2>/dev/null | xargs grep -l -i "cloud189\|天翼\|189" 2>/dev/null | head -5
+          
+          # 找 key 注册表
+          find /opt/hostedtoolcache -name "*.py" 2>/dev/null | xargs grep -l "CHECKIN_MAP\|checkin_map\|register" 2>/dev/null | head -5
