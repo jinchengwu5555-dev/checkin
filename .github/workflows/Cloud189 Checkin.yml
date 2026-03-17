@@ -1,4 +1,4 @@
-name: Test Cloud189 Node
+name: Test Cloud189 Node v2
 
 on:
   workflow_dispatch:
@@ -15,7 +15,7 @@ jobs:
       - name: Install dependencies
         run: npm install node-rsa axios
 
-      - name: Test Cloud189
+      - name: Test
         env:
           CLOUD189_USERNAME: ${{ secrets.CLOUD189_USERNAME }}
           CLOUD189_PASSWORD: ${{ secrets.CLOUD189_PASSWORD }}
@@ -26,8 +26,6 @@ jobs:
 
           const USERNAME = process.env.CLOUD189_USERNAME;
           const PASSWORD = process.env.CLOUD189_PASSWORD;
-
-          // wes-lin Cloud189Checkin 使用的固定 pubKey
           const PUB_KEY = 'MIGfMA0GCSqGSIb3DQEBAQUAA4GNADCBiQKBgQCZLyV4gHNDUGJMZoOcYauxmNEsKrc0TlLeBEVVIIQNzG4WqjimceOj5R9ETwDeeSN3yejAKLGHgx83lyy2wBjvnbfm/nLObyWwQD/09CmpZdxoFYCH6rdDjRpwZOZ2nXSZpgkZXoOBkfNXNxnN74aXtho2dqBynTw3NFTWyQl8BQIDAQAB';
 
           function rsaEncrypt(text) {
@@ -38,23 +36,24 @@ jobs:
           }
 
           const client = axios.create({
-            baseURL: 'https://cloud.189.cn',
+            timeout: 15000,
             headers: {
               'User-Agent': 'Mozilla/5.0 (Linux; Android 11; Pixel 5) AppleWebKit/537.36',
               'Referer': 'https://cloud.189.cn/',
             },
-            withCredentials: true,
+            // 不自动跟随重定向，手动处理
+            maxRedirects: 0,
+            validateStatus: s => s < 500,
           });
 
-          // 存储 cookie
           let cookies = {};
           client.interceptors.response.use(res => {
             const setCookie = res.headers['set-cookie'];
             if (setCookie) {
               setCookie.forEach(c => {
                 const [kv] = c.split(';');
-                const [k, v] = kv.split('=');
-                cookies[k.trim()] = v;
+                const idx = kv.indexOf('=');
+                if (idx > 0) cookies[kv.substring(0, idx).trim()] = kv.substring(idx + 1);
               });
             }
             return res;
@@ -65,102 +64,78 @@ jobs:
             return cfg;
           });
 
-          async function login() {
-            console.log('Step 1: 获取登录参数...');
-            const r1 = await client.get('https://open.e.189.cn/api/logbox/oauth2/unifyAccountLogin.do', {
-              params: {
-                appId: 'cloud',
-                clientId: '538135150693412',
-                returnUrl: 'https://m.cloud.189.cn/zhuanti/2021/shakeLottery/index.html',
-                timeStamp: Date.now(),
-              }
-            });
-
-            const html = r1.data;
-            const lt      = html.match(/lt = "(.+?)"/)?.[1];
-            const reqId   = html.match(/reqId = "(.+?)"/)?.[1];
-            const paramId = html.match(/paramId = "(.+?)"/)?.[1];
-            console.log(`  lt: ${lt ? 'found' : 'NOT FOUND'}`);
-            console.log(`  reqId: ${reqId ? 'found' : 'NOT FOUND'}`);
-
-            if (!lt || !reqId) {
-              console.log('登录页前500字符:', html.substring(0, 500));
-              throw new Error('获取登录参数失败');
-            }
-
-            console.log('Step 2: 提交登录...');
-            const encUser = rsaEncrypt(USERNAME);
-            const encPass = rsaEncrypt(PASSWORD);
-
-            const params = new URLSearchParams({
-              appKey: 'cloud',
-              accountType: '01',
-              userName: `{RSA}${encUser}`,
-              password: `{RSA}${encPass}`,
-              validateCode: '',
-              captchaToken: '',
-              lt,
-              returnUrl: 'https://m.cloud.189.cn/zhuanti/2021/shakeLottery/index.html',
-              paramId: reqId,
-              clientType: '10010',
-            });
-
-            const r2 = await client.post(
-              'https://open.e.189.cn/api/logbox/oauth2/loginSubmit.do',
-              params.toString(),
-              { headers: { 'Content-Type': 'application/x-www-form-urlencoded' } }
-            );
-
-            console.log('  登录响应:', JSON.stringify(r2.data));
-
-            if (r2.data.result !== 0) throw new Error(`登录失败: ${JSON.stringify(r2.data)}`);
-
-            // 跳转
-            if (r2.data.toUrl) {
-              await client.get(r2.data.toUrl);
-            }
-            console.log('✅ 登录成功');
-          }
-
-          async function sign() {
-            console.log('Step 3: 签到...');
-            const r = await client.get('/mkt/userSign.action', {
-              params: {
-                rand: Date.now(),
-                clientType: 'TELEANDROID',
-                version: '8.6.3',
-                model: 'SM-G9500',
-              }
-            });
-            console.log('签到响应:', JSON.stringify(r.data));
-          }
-
-          async function lottery() {
-            console.log('Step 4: 抽奖...');
-            for (let i = 0; i < 2; i++) {
-              const r = await client.get('/mkt/getLucky.action', {
-                params: {
-                  rand: Date.now(),
-                  clientType: 'TELEANDROID',
-                  version: '8.6.3',
-                  model: 'SM-G9500',
-                }
-              });
-              console.log(`  抽奖${i+1}:`, JSON.stringify(r.data));
-              await new Promise(r => setTimeout(r, 1000));
-            }
-          }
-
           (async () => {
             try {
-              await login();
-              await sign();
-              await lottery();
+              // Step 1
+              console.log('Step 1: 获取登录页...');
+              const r1 = await client.get('https://open.e.189.cn/api/logbox/oauth2/unifyAccountLogin.do', {
+                params: {
+                  appId: 'cloud',
+                  clientId: '538135150693412',
+                  returnUrl: 'https://m.cloud.189.cn/zhuanti/2021/shakeLottery/index.html',
+                  timeStamp: Date.now(),
+                }
+              });
+              console.log('  状态码:', r1.status);
+              console.log('  内容前300字符:', String(r1.data).substring(0, 300));
+
+              const html = String(r1.data);
+              const lt    = html.match(/lt = "(.+?)"/)?.[1];
+              const reqId = html.match(/reqId = "(.+?)"/)?.[1];
+              console.log('  lt:', lt || 'NOT FOUND');
+              console.log('  reqId:', reqId || 'NOT FOUND');
+
+              if (!lt || !reqId) {
+                console.log('  完整响应:', html.substring(0, 1000));
+                process.exit(1);
+              }
+
+              // Step 2
+              console.log('Step 2: 登录...');
+              const encUser = rsaEncrypt(USERNAME);
+              const encPass = rsaEncrypt(PASSWORD);
+              const body = new URLSearchParams({
+                appKey: 'cloud', accountType: '01',
+                userName: `{RSA}${encUser}`, password: `{RSA}${encPass}`,
+                validateCode: '', captchaToken: '', lt,
+                returnUrl: 'https://m.cloud.189.cn/zhuanti/2021/shakeLottery/index.html',
+                paramId: reqId, clientType: '10010',
+              }).toString();
+
+              const r2 = await client.post(
+                'https://open.e.189.cn/api/logbox/oauth2/loginSubmit.do',
+                body,
+                { headers: { 'Content-Type': 'application/x-www-form-urlencoded' } }
+              );
+              console.log('  状态码:', r2.status);
+              console.log('  响应:', JSON.stringify(r2.data));
+
+              if (r2.data.result !== 0) { console.log('登录失败'); process.exit(1); }
+
+              // 跳转
+              if (r2.data.toUrl) {
+                console.log('Step 2b: 跳转获取 cookie...');
+                const r3 = await client.get(r2.data.toUrl);
+                console.log('  跳转状态:', r3.status);
+              }
+              console.log('✅ 登录成功，当前 cookies:', Object.keys(cookies));
+
+              // Step 3 签到
+              console.log('Step 3: 签到...');
+              const r4 = await client.get('https://cloud.189.cn/mkt/userSign.action', {
+                params: { rand: Date.now(), clientType: 'TELEANDROID', version: '8.6.3', model: 'SM-G9500' }
+              });
+              console.log('  签到响应:', JSON.stringify(r4.data));
+
             } catch(e) {
               console.error('❌ 错误:', e.message);
+              console.error('  stack:', e.stack?.split('\n').slice(0,3).join('\n'));
               if (e.response) {
-                console.error('响应状态:', e.response.status);
-                console.error('响应内容:', JSON.stringify(e.response.data)?.substring(0, 300));
+                console.error('  HTTP状态:', e.response.status);
+                console.error('  响应内容:', JSON.stringify(e.response.data)?.substring(0, 500));
+              } else if (e.request) {
+                console.error('  请求已发出但无响应（网络问题）');
+                console.error('  请求URL:', e.config?.url);
               }
               process.exit(1);
             }
