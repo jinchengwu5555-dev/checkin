@@ -1,4 +1,4 @@
-name: Test Cloud189 Key
+name: Test Cloud189 Node
 
 on:
   workflow_dispatch:
@@ -7,31 +7,163 @@ jobs:
   test:
     runs-on: ubuntu-latest
     steps:
-      - name: Setup Python
-        uses: actions/setup-python@v5
+      - name: Setup Node
+        uses: actions/setup-node@v4
         with:
-          python-version: '3.11'
+          node-version: '20'
+
       - name: Install dependencies
-        run: pip install dailycheckin --break-system-packages
-      - name: Find key
+        run: npm install node-rsa axios
+
+      - name: Test Cloud189
+        env:
+          CLOUD189_USERNAME: ${{ secrets.CLOUD189_USERNAME }}
+          CLOUD189_PASSWORD: ${{ secrets.CLOUD189_PASSWORD }}
         run: |
-          python3 - << 'EOF'
-          import dailycheckin, os, inspect
+          cat << 'EOF' > checkin.js
+          const axios = require('axios');
+          const NodeRSA = require('node-rsa');
 
-          # 打印 dailycheckin 包的位置
-          pkg_path = os.path.dirname(inspect.getfile(dailycheckin))
-          print(f"包路径: {pkg_path}")
+          const USERNAME = process.env.CLOUD189_USERNAME;
+          const PASSWORD = process.env.CLOUD189_PASSWORD;
 
-          # 列出所有文件
-          for root, dirs, files in os.walk(pkg_path):
-              for f in files:
-                  print(os.path.join(root, f))
+          // wes-lin Cloud189Checkin 使用的固定 pubKey
+          const PUB_KEY = 'MIGfMA0GCSqGSIb3DQEBAQUAA4GNADCBiQKBgQCZLyV4gHNDUGJMZoOcYauxmNEsKrc0TlLeBEVVIIQNzG4WqjimceOj5R9ETwDeeSN3yejAKLGHgx83lyy2wBjvnbfm/nLObyWwQD/09CmpZdxoFYCH6rdDjRpwZOZ2nXSZpgkZXoOBkfNXNxnN74aXtho2dqBynTw3NFTWyQl8BQIDAQAB';
+
+          function rsaEncrypt(text) {
+            const key = new NodeRSA();
+            key.importKey(`-----BEGIN PUBLIC KEY-----\n${PUB_KEY}\n-----END PUBLIC KEY-----`, 'pkcs8-public');
+            key.setOptions({ encryptionScheme: 'pkcs1' });
+            return key.encrypt(text, 'base64');
+          }
+
+          const client = axios.create({
+            baseURL: 'https://cloud.189.cn',
+            headers: {
+              'User-Agent': 'Mozilla/5.0 (Linux; Android 11; Pixel 5) AppleWebKit/537.36',
+              'Referer': 'https://cloud.189.cn/',
+            },
+            withCredentials: true,
+          });
+
+          // 存储 cookie
+          let cookies = {};
+          client.interceptors.response.use(res => {
+            const setCookie = res.headers['set-cookie'];
+            if (setCookie) {
+              setCookie.forEach(c => {
+                const [kv] = c.split(';');
+                const [k, v] = kv.split('=');
+                cookies[k.trim()] = v;
+              });
+            }
+            return res;
+          });
+          client.interceptors.request.use(cfg => {
+            const cookieStr = Object.entries(cookies).map(([k,v]) => `${k}=${v}`).join('; ');
+            if (cookieStr) cfg.headers['Cookie'] = cookieStr;
+            return cfg;
+          });
+
+          async function login() {
+            console.log('Step 1: 获取登录参数...');
+            const r1 = await client.get('https://open.e.189.cn/api/logbox/oauth2/unifyAccountLogin.do', {
+              params: {
+                appId: 'cloud',
+                clientId: '538135150693412',
+                returnUrl: 'https://m.cloud.189.cn/zhuanti/2021/shakeLottery/index.html',
+                timeStamp: Date.now(),
+              }
+            });
+
+            const html = r1.data;
+            const lt      = html.match(/lt = "(.+?)"/)?.[1];
+            const reqId   = html.match(/reqId = "(.+?)"/)?.[1];
+            const paramId = html.match(/paramId = "(.+?)"/)?.[1];
+            console.log(`  lt: ${lt ? 'found' : 'NOT FOUND'}`);
+            console.log(`  reqId: ${reqId ? 'found' : 'NOT FOUND'}`);
+
+            if (!lt || !reqId) {
+              console.log('登录页前500字符:', html.substring(0, 500));
+              throw new Error('获取登录参数失败');
+            }
+
+            console.log('Step 2: 提交登录...');
+            const encUser = rsaEncrypt(USERNAME);
+            const encPass = rsaEncrypt(PASSWORD);
+
+            const params = new URLSearchParams({
+              appKey: 'cloud',
+              accountType: '01',
+              userName: `{RSA}${encUser}`,
+              password: `{RSA}${encPass}`,
+              validateCode: '',
+              captchaToken: '',
+              lt,
+              returnUrl: 'https://m.cloud.189.cn/zhuanti/2021/shakeLottery/index.html',
+              paramId: reqId,
+              clientType: '10010',
+            });
+
+            const r2 = await client.post(
+              'https://open.e.189.cn/api/logbox/oauth2/loginSubmit.do',
+              params.toString(),
+              { headers: { 'Content-Type': 'application/x-www-form-urlencoded' } }
+            );
+
+            console.log('  登录响应:', JSON.stringify(r2.data));
+
+            if (r2.data.result !== 0) throw new Error(`登录失败: ${JSON.stringify(r2.data)}`);
+
+            // 跳转
+            if (r2.data.toUrl) {
+              await client.get(r2.data.toUrl);
+            }
+            console.log('✅ 登录成功');
+          }
+
+          async function sign() {
+            console.log('Step 3: 签到...');
+            const r = await client.get('/mkt/userSign.action', {
+              params: {
+                rand: Date.now(),
+                clientType: 'TELEANDROID',
+                version: '8.6.3',
+                model: 'SM-G9500',
+              }
+            });
+            console.log('签到响应:', JSON.stringify(r.data));
+          }
+
+          async function lottery() {
+            console.log('Step 4: 抽奖...');
+            for (let i = 0; i < 2; i++) {
+              const r = await client.get('/mkt/getLucky.action', {
+                params: {
+                  rand: Date.now(),
+                  clientType: 'TELEANDROID',
+                  version: '8.6.3',
+                  model: 'SM-G9500',
+                }
+              });
+              console.log(`  抽奖${i+1}:`, JSON.stringify(r.data));
+              await new Promise(r => setTimeout(r, 1000));
+            }
+          }
+
+          (async () => {
+            try {
+              await login();
+              await sign();
+              await lottery();
+            } catch(e) {
+              console.error('❌ 错误:', e.message);
+              if (e.response) {
+                console.error('响应状态:', e.response.status);
+                console.error('响应内容:', JSON.stringify(e.response.data)?.substring(0, 300));
+              }
+              process.exit(1);
+            }
+          })();
           EOF
-
-      - name: Cat checkin files
-        run: |
-          # 找天翼相关文件
-          find /opt/hostedtoolcache -name "*.py" 2>/dev/null | xargs grep -l -i "cloud189\|天翼\|189" 2>/dev/null | head -5
-          
-          # 找 key 注册表
-          find /opt/hostedtoolcache -name "*.py" 2>/dev/null | xargs grep -l "CHECKIN_MAP\|checkin_map\|register" 2>/dev/null | head -5
+          node checkin.js
