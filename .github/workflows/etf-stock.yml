@@ -62,23 +62,26 @@ jobs:
               except:
                   return None
           def get_gold_price():
-              """获取黄金现货价格（美元/盎司），转换为人民币/克"""
+              """获取黄金现货价格（美元/盎司），转换为人民币/克，附今年高低"""
               try:
-                  # GC=F 为 COMEX 黄金期货，XAU=X 为现货
                   ticker = yf.Ticker('GC=F')
-                  hist = ticker.history(period='2d')
-                  if hist.empty: return None, None
-                  usd_per_oz = hist['Close'].iloc[-1]
-                  prev_oz    = hist['Close'].iloc[-2] if len(hist) >= 2 else usd_per_oz
-                  # 获取美元兑人民币汇率
+                  hist2d = ticker.history(period='2d')
+                  if hist2d.empty: return None, None, None, None
+                  usd_per_oz = hist2d['Close'].iloc[-1]
+                  prev_oz    = hist2d['Close'].iloc[-2] if len(hist2d) >= 2 else usd_per_oz
                   fx = yf.Ticker('CNY=X').history(period='2d')
                   rate = fx['Close'].iloc[-1] if not fx.empty else 7.1
-                  # 1 盎司 = 31.1035 克
                   cny_per_gram = usd_per_oz * rate / 31.1035
                   change_pct   = (usd_per_oz - prev_oz) / prev_oz * 100 if prev_oz else 0
-                  return round(cny_per_gram, 2), change_pct
+                  hist_ytd = ticker.history(period='ytd')
+                  if not hist_ytd.empty:
+                      ytd_high = hist_ytd['High'].max() * rate / 31.1035
+                      ytd_low  = hist_ytd['Low'].min()  * rate / 31.1035
+                  else:
+                      ytd_high = ytd_low = None
+                  return round(cny_per_gram, 2), change_pct, ytd_high, ytd_low
               except:
-                  return None, None
+                  return None, None, None, None
           now = datetime.now(timezone(timedelta(hours=8))).strftime('%Y-%m-%d %H:%M')
           lines = [f'### 📊 ETF 行情  {now}\n']
           lines.append('| ETF | 现价 | 较前日 | 历史最高 | 现价/最高 |')
@@ -96,14 +99,16 @@ jobs:
                   lines.append(f"| {label} | {cur} | {pct} | {h_str} | {ratio} |")
               else:
                   lines.append(f"| {label} | N/A | N/A | N/A | N/A |")
-          # 黄金克价
-          gold_cny, gold_chg = get_gold_price()
+          # 黄金克价（今年高低）
+          gold_cny, gold_chg, gold_high, gold_low = get_gold_price()
           if gold_cny:
               arrow = '↑' if gold_chg >= 0 else '↓'
               sign  = '+' if gold_chg >= 0 else ''
-              lines.append(f"| 🥇 黄金 | ¥{gold_cny}/克 | {arrow}{sign}{gold_chg:.2f}% | - | - |")
+              h_str = f"¥{gold_high:.2f}" if gold_high else 'N/A'
+              l_str = f"¥{gold_low:.2f}"  if gold_low  else 'N/A'
+              lines.append(f"| 🥇 黄金 | ¥{gold_cny}/克 | {arrow}{sign}{gold_chg:.2f}% | ↑{h_str} ↓{l_str} | - |")
           else:
-              lines.append(f"| 🥇 黄金 | N/A | N/A | - | - |")
+              lines.append(f"| 🥇 黄金 | N/A | N/A | N/A | - |")
           result = '\n'.join(lines)
           print(result)
           with open(os.environ['GITHUB_OUTPUT'], 'a') as f:
