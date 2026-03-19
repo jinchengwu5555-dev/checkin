@@ -1,5 +1,4 @@
 name: ETF Stock Data
-
 on:
   workflow_dispatch:
   workflow_call:
@@ -7,22 +6,18 @@ on:
       result:
         description: "ETF行情"
         value: ${{ jobs.fetch.outputs.result }}
-
 jobs:
   fetch:
     runs-on: ubuntu-latest
     outputs:
       result: ${{ steps.fetch.outputs.result }}
-
     steps:
       - name: Setup Python
         uses: actions/setup-python@v5
         with:
           python-version: '3.11'
-
       - name: Install dependencies
         run: pip install requests yfinance --break-system-packages
-
       - name: ETF Stock Data
         id: fetch
         run: |
@@ -30,20 +25,16 @@ jobs:
           import requests, os
           from datetime import datetime, timezone, timedelta
           import yfinance as yf
-
           ETFS = [
               ('510500', '中证500ETF',  '510500.SS'),
-              ('518880', '黄金ETF',     '518880.SS'),
               ('510300', '沪深300ETF',  '510300.SS'),
               ('513100', '纳斯达克ETF', '513100.SS'),
               ('513500', '标普500ETF',  '513500.SS'),
           ]
-
           headers = {
               'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
               'Referer': 'https://finance.sina.com.cn'
           }
-
           def get_realtime(code):
               try:
                   r = requests.get(f"https://hq.sinajs.cn/list=sh{code}", headers=headers, timeout=10)
@@ -51,9 +42,8 @@ jobs:
                   data_str = r.text.split('"')[1]
                   if not data_str: return None
                   f          = data_str.split(',')
-                  prev_close = float(f[2])   # 昨收
-                  current    = float(f[3])   # 当前价（交易中）
-                  # 开盘前/休市时 current=0，依次 fallback：买一[6] → 昨收
+                  prev_close = float(f[2])
+                  current    = float(f[3])
                   if current == 0:
                       bid = float(f[6]) if len(f) > 6 else 0
                       current = bid if bid > 0 else prev_close
@@ -64,7 +54,6 @@ jobs:
                   }
               except:
                   return None
-
           def get_history_high(yahoo_symbol):
               try:
                   hist = yf.Ticker(yahoo_symbol).history(period='max')
@@ -72,12 +61,28 @@ jobs:
                   return hist['High'].max()
               except:
                   return None
-
+          def get_gold_price():
+              """获取黄金现货价格（美元/盎司），转换为人民币/克"""
+              try:
+                  # GC=F 为 COMEX 黄金期货，XAU=X 为现货
+                  ticker = yf.Ticker('GC=F')
+                  hist = ticker.history(period='2d')
+                  if hist.empty: return None, None
+                  usd_per_oz = hist['Close'].iloc[-1]
+                  prev_oz    = hist['Close'].iloc[-2] if len(hist) >= 2 else usd_per_oz
+                  # 获取美元兑人民币汇率
+                  fx = yf.Ticker('CNY=X').history(period='2d')
+                  rate = fx['Close'].iloc[-1] if not fx.empty else 7.1
+                  # 1 盎司 = 31.1035 克
+                  cny_per_gram = usd_per_oz * rate / 31.1035
+                  change_pct   = (usd_per_oz - prev_oz) / prev_oz * 100 if prev_oz else 0
+                  return round(cny_per_gram, 2), change_pct
+              except:
+                  return None, None
           now = datetime.now(timezone(timedelta(hours=8))).strftime('%Y-%m-%d %H:%M')
           lines = [f'### 📊 ETF 行情  {now}\n']
           lines.append('| ETF | 现价 | 较前日 | 历史最高 | 现价/最高 |')
           lines.append('|:---|:---:|:---:|:---:|:---:|')
-
           for code, label, yahoo in ETFS:
               d    = get_realtime(code)
               high = get_history_high(yahoo)
@@ -91,7 +96,14 @@ jobs:
                   lines.append(f"| {label} | {cur} | {pct} | {h_str} | {ratio} |")
               else:
                   lines.append(f"| {label} | N/A | N/A | N/A | N/A |")
-
+          # 黄金克价
+          gold_cny, gold_chg = get_gold_price()
+          if gold_cny:
+              arrow = '↑' if gold_chg >= 0 else '↓'
+              sign  = '+' if gold_chg >= 0 else ''
+              lines.append(f"| 🥇 黄金 | ¥{gold_cny}/克 | {arrow}{sign}{gold_chg:.2f}% | - | - |")
+          else:
+              lines.append(f"| 🥇 黄金 | N/A | N/A | - | - |")
           result = '\n'.join(lines)
           print(result)
           with open(os.environ['GITHUB_OUTPUT'], 'a') as f:
