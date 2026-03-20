@@ -2,43 +2,44 @@ name: Daily Summary
 on:
   workflow_dispatch:
   schedule:
-    - cron: '30 1 * * *'
+    - cron: '0 0 * * 5'  # 每周五 UTC 00:00，即北京时间 08:00
 
 jobs:
   delay:
     runs-on: ubuntu-latest
     steps:
-      - name: Random Delay (北京时间 08:00~09:00)
+      - name: Random Delay
         run: |
           delay=$((RANDOM % 1800))
           echo "随机等待 ${delay} 秒（约 $((delay/60)) 分钟）"
           sleep $delay
 
-  bilibili:
-    needs: delay
-    uses: ./.github/workflows/bilibili-checkin.yml
-    secrets: inherit
-  baidu:
-    needs: delay
-    uses: ./.github/workflows/baidu-checkin.yml
-    secrets: inherit
-  juejin:
-    needs: delay
-    uses: ./.github/workflows/juejin-checkin.yml
-    secrets: inherit
-  jd:
-    needs: delay
-    uses: ./.github/workflows/jd-checkin.yml
-    secrets: inherit
-  etf:
-    needs: delay
-    uses: ./.github/workflows/etf-stock.yml
-  nba:
-    needs: delay
-    uses: ./.github/workflows/nba-schedule.yml
-  exchange:
-    needs: delay
-    uses: ./.github/workflows/exchange-rates.yml
+  # bilibili:
+  #   needs: delay
+  #   uses: ./.github/workflows/bilibili-checkin.yml
+  #   secrets: inherit
+  # baidu:
+  #   needs: delay
+  #   uses: ./.github/workflows/baidu-checkin.yml
+  #   secrets: inherit
+  # juejin:
+  #   needs: delay
+  #   uses: ./.github/workflows/juejin-checkin.yml
+  #   secrets: inherit
+  # jd:
+  #   needs: delay
+  #   uses: ./.github/workflows/jd-checkin.yml
+  #   secrets: inherit
+  # etf:
+  #   needs: delay
+  #   uses: ./.github/workflows/etf-stock.yml
+  # nba:
+  #   needs: delay
+  #   uses: ./.github/workflows/nba-schedule.yml
+  # exchange:
+  #   needs: delay
+  #   uses: ./.github/workflows/exchange-rates.yml
+
   epic:
     needs: delay
     uses: ./.github/workflows/epic-games.yml
@@ -47,7 +48,7 @@ jobs:
     uses: ./.github/workflows/steam-sales.yml
 
   push:
-    needs: [bilibili, baidu, juejin, jd, etf, nba, exchange, epic, steam]
+    needs: [epic, steam]
     runs-on: ubuntu-latest
     if: always()
 
@@ -63,13 +64,13 @@ jobs:
       - name: Push to Server酱
         env:
           SERVERCHAN_KEY: ${{ secrets.SERVERCHAN_KEY }}
-          RESULT_BILIBILI: ${{ needs.bilibili.outputs.result }}
-          RESULT_BAIDU:    ${{ needs.baidu.outputs.result }}
-          RESULT_JUEJIN:   ${{ needs.juejin.outputs.result }}
-          RESULT_JD:       ${{ needs.jd.outputs.result }}
-          RESULT_ETF:      ${{ needs.etf.outputs.result }}
-          RESULT_NBA:      ${{ needs.nba.outputs.result }}
-          RESULT_EXCHANGE: ${{ needs.exchange.outputs.result }}
+          # RESULT_BILIBILI: ${{ needs.bilibili.outputs.result }}
+          # RESULT_BAIDU:    ${{ needs.baidu.outputs.result }}
+          # RESULT_JUEJIN:   ${{ needs.juejin.outputs.result }}
+          # RESULT_JD:       ${{ needs.jd.outputs.result }}
+          # RESULT_ETF:      ${{ needs.etf.outputs.result }}
+          # RESULT_NBA:      ${{ needs.nba.outputs.result }}
+          # RESULT_EXCHANGE: ${{ needs.exchange.outputs.result }}
           RESULT_EPIC:     ${{ needs.epic.outputs.result }}
           RESULT_STEAM:    ${{ needs.steam.outputs.result }}
         run: |
@@ -84,20 +85,20 @@ jobs:
 
           cst = timezone(timedelta(hours=8))
           now = datetime.now(cst).strftime("%Y-%m-%d %H:%M")
-          title = f"📋 每日报告 {now}"
+          title = f"📋 每周报告 {now}"
 
           def get(k, fallback):
               v = os.environ.get(k, '').strip()
               return v if v else fallback
 
           sections = [
-              get('RESULT_BILIBILI', '📺 Bilibili: 未运行'),
-              get('RESULT_BAIDU',    '☁️ 百度网盘: 未运行'),
-              get('RESULT_JUEJIN',   '🪙 掘金: 未运行'),
-              get('RESULT_JD',       '🛒 京东: 未运行'),
-              get('RESULT_ETF',      '📊 ETF行情: 未运行'),
-              get('RESULT_NBA',      '🏀 NBA: 未运行'),
-              get('RESULT_EXCHANGE', '💱 汇率: 未运行'),
+              # get('RESULT_BILIBILI', '📺 Bilibili: 未运行'),
+              # get('RESULT_BAIDU',    '☁️ 百度网盘: 未运行'),
+              # get('RESULT_JUEJIN',   '🪙 掘金: 未运行'),
+              # get('RESULT_JD',       '🛒 京东: 未运行'),
+              # get('RESULT_ETF',      '📊 ETF行情: 未运行'),
+              # get('RESULT_NBA',      '🏀 NBA: 未运行'),
+              # get('RESULT_EXCHANGE', '💱 汇率: 未运行'),
               get('RESULT_EPIC',     '🎮 Epic: 未运行'),
               get('RESULT_STEAM',    '🎮 Steam: 未运行'),
           ]
